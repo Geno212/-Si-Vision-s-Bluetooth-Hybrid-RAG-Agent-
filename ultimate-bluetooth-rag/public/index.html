@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bluetooth RAG Agent</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>Bluetooth RAG Agent</h1>
+    <section class="panel">
+      <h2>Ask</h2>
+      <div class="row">
+        <label>Endpoint</label>
+        <input id="endpoint" type="text" value="" placeholder="Leave blank for same origin" />
+      </div>
+      <div class="row">
+        <label>Auth Token</label>
+        <input id="token" type="password" placeholder="Bearer token (if set)" />
+      </div>
+      <div class="row">
+        <label>Question</label>
+        <textarea id="question" rows="4" placeholder="Ask your Bluetooth question..."></textarea>
+      </div>
+      <div class="row actions">
+        <button id="ask">Ask</button>
+      </div>
+      <div class="row">
+        <pre id="answer"></pre>
+      </div>
+      <div id="citations"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Ingest (.txt/.md/.tex/.pdf/.docx)</h2>
+      <div class="row">
+        <input id="ingestFiles" type="file" multiple accept=".txt,.md,.tex,.pdf,.docx" />
+        <button id="ingestBtn">Ingest Selected</button>
+      </div>
+      <pre id="log"></pre>
+    </section>
+  </div>
+  <!-- PDF.js and Mammoth for client-side extraction -->
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+  <script src="/assets/main.js"></script>
+</body>
+</html> 

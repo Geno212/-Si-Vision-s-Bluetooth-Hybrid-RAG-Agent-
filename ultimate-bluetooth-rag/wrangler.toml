@@ -1,0 +1,30 @@
+name = "bt-rag"
+main = "src/index.ts"
+tsconfig = "tsconfig.json"
+compatibility_date = "2024-08-01"
+account_id = "0985fb579886c26877d388f96b3b1d5e"
+
+[ai]
+binding = "AI"
+
+[[r2_buckets]]
+binding = "DOCS_BUCKET"
+bucket_name = "bt-rag-docs"
+
+[[vectorize]]
+binding = "VECTORIZE_INDEX"
+index_name = "bt-rag-index"
+
+[assets]
+directory = "./public"
+
+[vars]
+# Retrieval and ranking knobs
+MIN_RANK_SCORE = "0.22"        # if top score < threshold → web fallback
+TOP_K = "20"                   # ANN candidates to fetch
+TOP_RERANK = "5"               # keep after rerank
+
+# Model choices (Workers AI)
+MODEL_GENERATION = "@cf/openai/gpt-oss-20b"
+MODEL_EMBEDDING = "@cf/baai/bge-large-en-v1.5"  # 1024 dims
+MODEL_RERANK = "@cf/baai/bge-reranker-base" 

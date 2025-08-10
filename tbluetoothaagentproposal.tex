@@ -1,0 +1,234 @@
+\documentclass[11pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{fancyhdr}
+\usepackage{titling}
+
+% Document Metadata
+\title{\textbf{Technical Whitepaper: \\ The Ultimate Bluetooth AI Agent}}
+\author{A Hybrid RAG-Agent Architecture for Expert-Level Conversational AI}
+\date{August 4, 2025}
+
+% Page Geometry
+\geometry{
+ a4paper,
+ total={170mm,257mm},
+ left=20mm,
+ top=20mm,
+}
+
+% Hyperlink Setup
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    pdftitle={Ultimate Bluetooth AI Agent},
+    pdfpagemode=FullScreen,
+}
+
+% Listings (Code) Style
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+% Header and Footer
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{Bluetooth AI Agent}
+\lhead{Technical Whitepaper}
+\rfoot{Page \thepage}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+\noindent This document presents a comprehensive technical blueprint for the design, development, and deployment of the "Ultimate Bluetooth AI Agent." This system is architected as a sophisticated, hybrid Retrieval-Augmented Generation (RAG) Agent capable of answering deep technical questions, accessing live web information, and continuously improving through a feedback-driven data engine. We detail a phased implementation plan, from building the advanced RAG core to fine-tuning a specialized, cost-effective language model. The proposed architecture ensures accuracy, verifiability, and scalability, culminating in a state-of-the-art conversational AI expert for the Bluetooth technology domain.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+The goal of this project is to transcend traditional chatbots by creating an AI agent with expert-level knowledge of Bluetooth technology. Standard Large Language Models (LLMs) lack deep, specialized knowledge and cannot access proprietary documentation or live web data, leading to generic or inaccurate answers. This whitepaper outlines a solution: a hybrid agent that combines the grounded accuracy of a Retrieval-Augmented Generation (RAG) system with the dynamic capabilities of a web-searching agent, all orchestrated by a powerful reasoning loop.
+
+\section{System Architecture}
+The agent's architecture is designed for modularity and intelligence. It consists of a central reasoning core that directs user queries to one of several specialized tools based on an initial intent analysis.
+
+\begin{figure}[h!]
+    \centering
+    % To include your workflow diagram, upload the PDF file to your LaTeX project
+    % (e.g., in Overleaf) and make sure its filename matches the one below.
+    % For example, if your file is named "workflow.pdf", change the line to:
+    % \includegraphics[width=\textwidth]{workflow.pdf}
+    \includegraphics[width=\textwidth]{workflow_diagram.pdf}
+    \caption{High-level workflow of the Ultimate Bluetooth AI Agent.}
+    \label{fig:workflow}
+\end{figure}
+
+\subsection{Core Components}
+\begin{itemize}
+    \item \textbf{Agent Core (LangChain):} The orchestrator that manages the state and executes the reasoning loop.
+    \item \textbf{Intent Router:} An initial LLM call that classifies the user's query to determine the best tool for the job.
+    \item \textbf{LLM Brain:} The reasoning engine. Initially, this is a powerful API-based "Teacher" model (e.g., Google Gemini 1.5 Pro). Ultimately, it becomes our own fine-tuned "Specialist" model.
+    \item \textbf{Tool Suite:}
+    \begin{itemize}
+        \item \textbf{Advanced RAG Tool:} For querying a private knowledge base of technical documents.
+        \item \textbf{Web Search Tool:} For accessing live, public information via an API like Tavily.
+    \end{itemize}
+    \item \textbf{Feedback \& Data Engine:} A backend system for logging all interactions and curating a dataset for continuous model improvement.
+\end{itemize}
+
+\section{Architectural Decisions and Alternatives}
+The selection of a hybrid RAG-Agent architecture was a deliberate choice made after evaluating common alternatives. This section justifies our approach over direct fine-tuning and standard RAG systems.
+
+\subsection{Why Not Direct Fine-Tuning from the Start?}
+Fine-tuning a base LLM directly on raw technical documents is a common suggestion, but it is suboptimal for an expert Q\&A system due to several critical flaws:
+\begin{itemize}
+    \item \textbf{Risk of Hallucination:} Fine-tuning causes a model to "memorize" information by adjusting its neural weights. This is an imperfect, lossy compression. The model does not store facts like a database and will often "hallucinate," confidently stating incorrect information that sounds plausible. For a technical domain where precision is paramount, this is unacceptable.
+    \item \textbf{Static Knowledge:} The model's knowledge is frozen at the moment of training. To add a new document or update an existing one, the entire costly and time-consuming fine-tuning process must be repeated. Our RAG-based approach allows for dynamic knowledge updates by simply adding a document to the vector database.
+    \item \textbf{Lack of Verifiability:} A fine-tuned model cannot cite its sources. It is a "black box" that cannot explain where it obtained a piece of information. Our RAG system is designed for verifiability, as every answer is grounded in specific, retrieved text chunks that can be presented to the user.
+    \item \textbf{Prohibitive Data Requirements:} Effective fine-tuning requires a massive dataset not of raw documents, but of high-quality, structured question-answer pairs. Manually creating thousands of such pairs from dense technical material is impractical.
+\end{itemize}
+Our strategy uses fine-tuning for its true strength: not to teach the model \textit{what} to know, but to teach it \textit{how to reason}, use tools, and communicate in an expert style.
+
+\subsection{How This Differs from a "Normal" RAG System}
+A standard RAG system is a linear pipeline: a user query retrieves documents, and those documents are passed to an LLM to generate an answer. Our "Ultimate Agent" is a significant evolution of this concept:
+\begin{itemize}
+    \item \textbf{Agentic, Not Linear:} Our system is not a fixed pipeline but a dynamic agent with a reasoning loop. It can make decisions. The \textbf{Intent Router} first analyzes the query to decide if it even needs to use the RAG tool, or if a web search or simple conversational response is more appropriate.
+    \item \textbf{Multi-Tool Capability:} A normal RAG system has one tool: its knowledge base. Our agent has multiple tools (RAG, Web Search) and can be extended with more (e.g., a tool to execute code or query a database). This makes it far more versatile.
+    \item \textbf{Advanced Retrieval Techniques:} Standard RAG often uses a simple vector search. Our system employs a sophisticated \textbf{Two-Stage Retrieval} process. An initial, broad search is followed by a more precise Cross-Encoder re-ranking step, ensuring the context passed to the LLM is of the highest possible relevance and quality.
+    \item \textbf{Continuous Improvement Loop:} A standard RAG system is static. Our architecture includes a built-in feedback and data curation engine, allowing the agent to learn from its interactions and enabling the eventual creation of a specialized, fine-tuned model that is an expert at using its tools.
+\end{itemize}
+
+\section{Phase 1: Knowledge Foundation (Advanced RAG)}
+\subsection{Objective}
+To build a highly accurate retrieval system that can find the most relevant information from a vast library of private technical documents.
+
+\subsection{Key Technologies}
+\begin{itemize}
+    \item \textbf{Language:} Python 3.10+
+    \item \textbf{Document Processing:} \texttt{pypdf}, \texttt{Unstructured}
+    \item \textbf{Embedding Model:} \texttt{BAAI/bge-large-en-v1.5} (via Hugging Face)
+    \item \textbf{Vector Database:} \texttt{ChromaDB} (local), \texttt{pgvector} (production)
+    \item \textbf{Re-ranking Model:} Cross-Encoder (\texttt{ms-marco-MiniLM-L-6-v2})
+\end{itemize}
+
+\subsection{Implementation Techniques}
+\begin{enumerate}
+    \item \textbf{Context-Aware Chunking:} We use \texttt{RecursiveCharacterTextSplitter} and \texttt{MarkdownHeaderTextSplitter} to break documents into logically coherent chunks, preserving tables and section context.
+    \item \textbf{Two-Stage Retrieval:} To maximize both recall and precision, we first retrieve a large set of 20 candidate documents using vector search. We then use a more computationally intensive Cross-Encoder to re-rank these 20 candidates and select the top 3-5 most relevant passages. This significantly improves the quality of the context provided to the LLM.
+\end{enumerate}
+
+\section{Phase 2: Agentic Framework \& MVP}
+\subsection{Objective}
+To assemble the agent's reasoning loop, integrate the tools, and deploy a functional MVP for internal data collection.
+
+\subsection{Key Technologies}
+\begin{itemize}
+    \item \textbf{Agent Framework:} \texttt{LangChain} (\texttt{create\_tool\_calling\_agent}, \texttt{AgentExecutor})
+    \item \textbf{"Teacher" LLM:} Google Gemini 1.5 Pro (via \texttt{langchain-google-genai})
+    \item \textbf{Web UI:} \texttt{Streamlit}
+\end{itemize}
+
+\subsection{Implementation Techniques}
+The RAG pipeline is wrapped in a function and decorated with LangChain's \texttt{@tool}. This, along with the Tavily search tool, is provided to the \texttt{AgentExecutor}. The agent's prompt explicitly instructs it on when to use each tool. The Streamlit UI is built to handle chat history and capture user feedback via buttons next to each response.
+
+\section{Phase 3: Continuous Improvement Loop}
+\subsection{Objective}
+To establish an automated pipeline that identifies high-quality interactions and prepares them for fine-tuning.
+
+\subsection{Key Technologies}
+\begin{itemize}
+    \item \textbf{Database:} PostgreSQL
+    \item \textbf{Data Schema:} Pydantic
+    \item \textbf{"Judge" LLM:} GPT-4o or Gemini 1.5 Pro
+\end{itemize}
+
+\subsection{Implementation Techniques}
+Every interaction is logged to a structured database. A nightly batch job uses a "judge" LLM to score each interaction for accuracy and completeness based on the retrieved context. A separate internal UI allows a human expert to review interactions flagged as high-quality (either by a user's "thumbs up" or a high AI judge score) and give final approval, adding them to the "golden" fine-tuning dataset.
+
+\section{Phase 4: Specialist Model Fine-Tuning}
+\subsection{Objective}
+To create a cost-effective, specialized model by distilling the reasoning skills of the "Teacher" model.
+
+\subsection{Key Technologies}
+\begin{itemize}
+    \item \textbf{Training Framework:} Hugging Face (\texttt{transformers}, \texttt{peft}, \texttt{trl})
+    \item \textbf{Base Model:} \texttt{meta-llama/Llama-3-8B-Instruct}
+    \item \textbf{Technique:} PEFT / LoRA (Low-Rank Adaptation)
+\end{itemize}
+
+\subsection{Implementation Techniques}
+We use Parameter-Efficient Fine-Tuning (PEFT) via the LoRA method. This freezes the base model's weights and injects small, trainable "adapter" layers. We fine-tune only these adapters on our curated dataset of a few hundred to a few thousand approved interactions. This process is computationally efficient and teaches the model the expert \textit{style}, \textit{tone}, and \textit{reasoning process} for using its tools, rather than trying to make it memorize facts.
+
+\begin{lstlisting}[language=Python, caption=Conceptual Fine-Tuning Script]
+from transformers import AutoModelForCausalLM, TrainingArguments
+from peft import LoraConfig
+from trl import SFTTrainer
+
+# 1. Load base model with quantization
+model = AutoModelForCausalLM.from_pretrained(
+    "meta-llama/Llama-3-8B-Instruct",
+    load_in_4bit=True
+)
+
+# 2. Configure LoRA
+peft_config = LoraConfig(
+    r=16,
+    lora_alpha=32,
+    target_modules=["q_proj", "v_proj"],
+    lora_dropout=0.05,
+    bias="none",
+    task_type="CAUSAL_LM"
+)
+
+# 3. Instantiate Trainer
+trainer = SFTTrainer(
+    model=model,
+    train_dataset=formatted_dataset,
+    peft_config=peft_config,
+    args=TrainingArguments(
+        per_device_train_batch_size=4,
+        num_train_epochs=3,
+        learning_rate=2e-4,
+        output_dir="./lora-adapters",
+    ),
+    # ... other params
+)
+
+# 4. Train
+trainer.train()
+\end{lstlisting}
+
+\section{Conclusion}
+The proposed hybrid RAG-Agent architecture provides a robust and scalable path to creating a truly ultimate AI assistant for the Bluetooth domain. By separating the knowledge base (RAG) from the reasoning skill (LLM), and by implementing a continuous improvement loop, the system is designed to be perpetually accurate, verifiable, and cost-effective. This approach moves beyond simple Q\&A to deliver a genuine expert-level conversational experience.
+
+\end{document}
