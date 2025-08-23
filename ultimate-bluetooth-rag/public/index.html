@@ -3,47 +3,83 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Bluetooth RAG Agent</title>
+  <title>Si‑Vision | Bluetooth Hybrid RAG Agent</title>
   <link rel="stylesheet" href="/assets/styles.css" />
 </head>
 <body>
-  <div class="container">
-    <h1>Bluetooth RAG Agent</h1>
-    <section class="panel">
-      <h2>Ask</h2>
-      <div class="row">
-        <label>Endpoint</label>
-        <input id="endpoint" type="text" value="" placeholder="Leave blank for same origin" />
+  <!-- Branded header -->
+  <header class="brand-header">
+    <div class="brand">
+      <img class="brand-logo" alt="Si‑Vision" src="https://s3-eu-west-1.amazonaws.com/wuzzuf/files/company_logo/Silicon-Vision-Egypt-14381-1523546981.png" />
+      <div class="brand-texts">
+        <div class="brand-name">Si‑Vision</div>
+        <div class="brand-sub">Innovative IC Solutions</div>
       </div>
-      <div class="row">
-        <label>Auth Token</label>
-        <input id="token" type="password" placeholder="Bearer token (if set)" />
-      </div>
-      <div class="row">
-        <label>Question</label>
-        <textarea id="question" rows="4" placeholder="Ask your Bluetooth question..."></textarea>
-      </div>
-      <div class="row actions">
-        <button id="ask">Ask</button>
-      </div>
-      <div class="row">
-        <pre id="answer"></pre>
-      </div>
-      <div id="citations"></div>
-    </section>
+    </div>
+    <div class="brand-badge">Bluetooth Hybrid RAG Agent</div>
+  </header>
 
-    <section class="panel">
-      <h2>Ingest (.txt/.md/.tex/.pdf/.docx)</h2>
-      <div class="row">
-        <input id="ingestFiles" type="file" multiple accept=".txt,.md,.tex,.pdf,.docx" />
-        <button id="ingestBtn">Ingest Selected</button>
-      </div>
-      <pre id="log"></pre>
-    </section>
+  <div class="container">
+    <div class="app-grid">
+      <!-- Sidebar: connection + conversations + ingest -->
+      <aside class="sidebar panel">
+        <h2 class="panel-title">Session</h2>
+        <div class="row">
+          <label>Endpoint</label>
+          <input id="endpoint" type="text" value="" placeholder="Leave blank for same origin" />
+        </div>
+        <div class="row">
+          <label>Auth Token</label>
+          <input id="token" type="password" placeholder="Bearer token (if set)" />
+        </div>
+        <div class="divider"></div>
+        <h2 class="panel-title">Conversation</h2>
+        <div class="row combo">
+          <label>Active</label>
+          <select id="conversations"></select>
+        </div>
+        <div class="row btn-group">
+          <button id="newConversation" class="btn ghost">New</button>
+          <button id="exportConversation" class="btn ghost">Export</button>
+          <button id="clearConversation" class="btn danger">Clear</button>
+        </div>
+
+        <div class="divider"></div>
+        <h2 class="panel-title">Ingest (.txt/.md/.tex/.pdf/.docx)</h2>
+        <div class="row">
+          <input id="ingestFiles" type="file" multiple accept=".txt,.md,.tex,.pdf,.docx" />
+          <button id="ingestBtn" class="btn">Ingest</button>
+        </div>
+        <pre id="log" class="log-panel"></pre>
+      </aside>
+
+      <!-- Main chat area -->
+      <main class="chat-panel panel">
+        <div class="chat-header">
+          <h2>Chat</h2>
+        </div>
+        <div id="chat" class="chat"></div>
+        <div id="citations" class="citations"></div>
+        <div class="composer">
+          <textarea id="chatInput" rows="3" placeholder="Type your message..."></textarea>
+          <input id="maxIterInput" type="number" min="1" max="10" value="2" style="width: 60px; margin-left: 8px;" title="Max feedback iterations" />
+          <label for="maxIterInput" style="margin-left: 4px; font-size: 0.9em;">Iterations</label>
+          <button id="sendChat" class="btn primary" aria-label="Send message">Send</button>
+        </div>
+      </main>
+    </div>
   </div>
   <!-- PDF.js and Mammoth for client-side extraction -->
   <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
   <script src="/assets/main.js"></script>
+  <!-- Modal for citation context -->
+  <div id="modal-panel" class="modal-panel" style="display:none">
+    <div class="modal-content">
+      <span class="modal-close">&times;</span>
+      <h3></h3>
+      <div class="modal-body"></div>
+    </div>
+  </div>
 </body>
-</html> 
+</html>

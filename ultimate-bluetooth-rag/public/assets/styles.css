@@ -1,33 +1,150 @@
-:root{--bg:#0f172a;--panel:#111827;--text:#e5e7eb;--muted:#9ca3af;--accent:#38bdf8}
+.citation-type {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 2px;
+}
+.citation-label {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--accent-2);
+  background: #0ea5e933;
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+/* Highlight uncited/malformed steps and validation notes */
+.answer-step.uncited-step {
+  background: linear-gradient(90deg, #f43f5e22 0%, transparent 100%);
+  border-left: 4px solid var(--danger);
+  padding-left: 8px;
+}
+.answer-step.malformed-citation {
+  background: linear-gradient(90deg, #fbbf2422 0%, transparent 100%);
+  border-left: 4px solid #fbbf24;
+  padding-left: 8px;
+}
+.citation-link {
+  color: var(--accent-2);
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.citation-link:hover {
+  color: var(--accent);
+  text-decoration: underline solid;
+}
+.validation-notes-panel {
+  background: linear-gradient(90deg, #0ea5e933 0%, transparent 100%);
+  border-left: 4px solid var(--accent);
+  margin: 10px 0 0 0;
+  padding: 8px 12px;
+  font-size: 14px;
+  color: var(--accent-2);
+}
+/* Modal for citation context */
+.modal-panel {
+  position: fixed;
+  z-index: 1000;
+  left: 0; top: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  display: none;
+}
+.modal-panel .modal-content {
+  background: var(--panel);
+  border-radius: 12px;
+  padding: 24px 32px;
+  min-width: 320px;
+  max-width: 90vw;
+  box-shadow: 0 8px 32px #0008;
+  position: relative;
+}
+.modal-panel .modal-close {
+  position: absolute;
+  right: 16px;
+  top: 12px;
+  font-size: 24px;
+  color: var(--muted);
+  cursor: pointer;
+}
+:root{--bg:#0b1220;--panel:#0f172a;--panel-2:#0a1222;--text:#e5e7eb;--muted:#94a3b8;--accent:#2dd4bf;--accent-2:#38bdf8;--danger:#f43f5e;--surface:#0b1628;--ring:#1e293b}
 *{box-sizing:border-box}
-body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
-.container{max-width:900px;margin:24px auto;padding:0 16px}
-h1{font-size:24px;margin:0 0 16px}
-.panel{background:var(--panel);border:1px solid #1f2937;border-radius:12px;padding:16px;margin-bottom:16px}
+body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;background:radial-gradient(1200px 600px at 20% -10%,#0d1b2a 0%,rgba(13,27,42,.0) 60%),radial-gradient(1200px 600px at 120% 10%,#021019 0%,rgba(2,16,25,.0) 50%),var(--bg);color:var(--text)}
+.container{max-width:1200px;margin:24px auto;padding:0 16px}
+.panel{background:linear-gradient(180deg,var(--panel),var(--panel-2));border:1px solid var(--ring);border-radius:16px;padding:16px;margin-bottom:16px;backdrop-filter:saturate(120%)}
 .row{display:flex;gap:12px;align-items:center;margin:10px 0}
 label{min-width:120px;color:var(--muted)}
-input[type=text],input[type=password],textarea{flex:1;background:#0b1220;border:1px solid #1f2937;border-radius:8px;color:var(--text);padding:10px}
-button{background:var(--accent);border:none;color:#000;padding:10px 16px;border-radius:8px;font-weight:600;cursor:pointer}
-button:hover{filter:brightness(1.1)}
-pre{background:#0b1220;border:1px solid #1f2937;border-radius:8px;padding:12px;white-space:pre-wrap}
+input[type=text],input[type=password],textarea,select{flex:1;background:var(--surface);border:1px solid var(--ring);border-radius:10px;color:var(--text);padding:10px}
+select{appearance:none;background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="%2394a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>');background-repeat:no-repeat;background-position:right 10px center;padding-right:36px}
+.btn{background:linear-gradient(180deg,var(--accent-2),#0284c7);border:none;color:#001018;padding:10px 16px;border-radius:10px;font-weight:700;cursor:pointer;box-shadow:0 0 0 0 rgba(56,189,248,.0);transition:box-shadow .2s,transform .05s}
+.btn:hover{box-shadow:0 0 0 4px rgba(56,189,248,.15)}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:linear-gradient(180deg,var(--accent),#0ea5e9);color:#062025}
+.btn.ghost{background:transparent;border:1px solid var(--ring);color:var(--text)}
+.btn.danger{background:linear-gradient(180deg,#fb7185,var(--danger));color:#22040a}
+.btn-group{gap:8px}
+pre{background:var(--surface);border:1px solid var(--ring);border-radius:12px;padding:12px;white-space:pre-wrap;max-height:220px;overflow:auto}
 .citation{font-size:13px;color:var(--muted);margin:4px 0}
 .actions{justify-content:flex-end} 
+
+/* Chat timeline */
+.chat{background:
+  linear-gradient(180deg,rgba(2,8,23,.75),rgba(2,8,23,.55)),
+  radial-gradient(600px 300px at 10% 0%,rgba(8,47,73,.35),transparent 70%),
+  radial-gradient(600px 300px at 90% 0%,rgba(15,118,110,.25),transparent 70%);
+  border:1px solid var(--ring);border-radius:16px;padding:12px;min-height:300px;max-height:60vh;overflow:auto;margin:12px 0;scrollbar-width:thin}
+.chat::-webkit-scrollbar{height:8px;width:8px}
+.chat::-webkit-scrollbar-thumb{background:#0b2940;border-radius:8px}
+.msg{display:flex;margin:8px 0}
+.msg .bubble{max-width:85%;padding:12px 14px;border-radius:14px;white-space:pre-wrap;line-height:1.5}
+.msg.user{justify-content:flex-end}
+.msg.user .bubble{background:linear-gradient(180deg,#0b2a3f,#0b2132);border:1px solid #12324a;color:#e5e7eb;border-top-right-radius:6px;box-shadow:0 2px 0 0 #0a1b2b}
+.msg.assistant{justify-content:flex-start}
+.msg.assistant .bubble{background:linear-gradient(180deg,#0a192d,#0a1422);color:#dbeafe;border-top-left-radius:6px;border:1px solid #1e2e44;box-shadow:0 2px 0 0 #071526}
+.msg .meta{font-size:12px;color:#9ca3af;margin:2px 4px}
+.streaming{opacity:.9;animation:pulse 1.2s infinite ease-in-out}
+@keyframes pulse{0%{opacity:.7}50%{opacity:1}100%{opacity:.7}}
 
 /* Responsive tweaks */
 @media (max-width: 900px) {
   .container{max-width:100%;padding:0 12px}
   .panel{padding:12px}
-  h1{font-size:20px}
   .row{flex-direction:column;align-items:stretch}
   label{min-width:0}
-  button{width:100%}
+  button,.btn{width:100%}
   pre{font-size:14px}
   textarea{min-height:140px}
+  .app-grid{grid-template-columns:1fr}
+  .sidebar{position:relative;height:auto}
 }
 
 /* Very small screens (mobile portrait) */
 @media (max-width: 420px) {
   body{font-size:14px}
   .container{padding:0 8px}
-  input[type=text],input[type=password],textarea{font-size:16px}
+    input[type=text],input[type=password],textarea{font-size:16px}
 }
+
+/* --- Brand header & layout --- */
+.brand-header{position:sticky;top:0;z-index:10;background:linear-gradient(180deg,rgba(2,6,23,.85),rgba(2,6,23,.6));border-bottom:1px solid var(--ring);backdrop-filter:blur(6px)}
+.brand{max-width:1200px;margin:0 auto;display:flex;align-items:center;gap:12px;padding:12px 16px}
+.brand-logo{height:36px;width:auto;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(45,212,191,.2))}
+.brand-texts{display:flex;flex-direction:column}
+.brand-name{font-weight:800;letter-spacing:.2px}
+.brand-sub{font-size:12px;color:var(--muted)}
+.brand-badge{position:absolute;right:16px;top:12px;color:#67e8f9;background:rgba(7,89,133,.15);border:1px solid #0e7490;padding:6px 10px;border-radius:999px;font-weight:700;font-size:12px}
+
+.app-grid{display:grid;grid-template-columns:320px 1fr;gap:16px}
+.sidebar{position:sticky;top:68px;height:calc(100vh - 92px);overflow:auto}
+.chat-panel{display:flex;flex-direction:column;min-height:70vh}
+.chat-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.composer{display:flex;gap:10px;margin-top:8px}
+.composer textarea{resize:vertical}
+.citations{margin-top:8px}
+.divider{height:1px;background:var(--ring);margin:8px 0}
+.log-panel{margin-top:8px}
+.panel-title{margin:0 0 6px 0;font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+
+/* Lightweight grid background asset */
+.grid-bg{position:absolute;inset:0;pointer-events:none;opacity:.06;mask-image:radial-gradient(80% 80% at 50% 0%,black,transparent)}

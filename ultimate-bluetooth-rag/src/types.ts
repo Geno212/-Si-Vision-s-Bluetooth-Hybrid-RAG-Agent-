@@ -17,6 +17,10 @@ export interface Env {
 
   CF_ACCOUNT_ID?: string;
   CF_API_TOKEN?: string;
+
+  // Chat memory bindings (optional; added by conversational feature)
+  BT_RAG_CHAT_KV?: KVNamespace;
+  CHAT_SESSIONS?: DurableObjectNamespace;
 }
 
 // Minimal R2 bucket type (available in Workers runtime)
@@ -28,6 +32,25 @@ export type JsonObject = Record<string, unknown>;
 
 export interface AiBinding {
   run<TInput = unknown, TOutput = unknown>(model: string, input: TInput): Promise<TOutput>;
+}
+
+// Minimal KV namespace type (Cloudflare Workers)
+export interface KVNamespace {
+  get(key: string): Promise<string | null>;
+  get<TReturn = unknown>(key: string, type: { type: "json" }): Promise<TReturn | null>;
+  put(key: string, value: string, options?: { expirationTtl?: number; expiration?: number; }): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+
+// Minimal Durable Objects types (optional usage)
+export interface DurableObjectId {}
+export interface DurableObjectStub {
+  fetch(input: Request | string, init?: RequestInit): Promise<Response>;
+}
+export interface DurableObjectNamespace {
+  idFromName(name: string): DurableObjectId;
+  newUniqueId(): DurableObjectId;
+  get(id: DurableObjectId): DurableObjectStub;
 }
 
 // Minimal Vectorize binding types
@@ -75,3 +98,64 @@ export interface RetrievedChunk {
     length?: number;
   } & Record<string, unknown>;
 } 
+
+// Chat API types
+export type ChatRole = "system" | "user" | "assistant";
+
+export interface ChatMessage {
+  role: ChatRole;
+  content: string;
+  createdAt?: string; // ISO timestamp (optional)
+  tokensEstimated?: number; // optional for observability
+}
+
+export interface Citation {
+  ref: string; // e.g., "#1"
+  id: string;
+  title?: string;
+  source?: string;
+}
+
+export interface ChatRequestBody {
+  conversationId?: string;
+  messages: ChatMessage[];
+  stream?: boolean;
+  topK?: number;
+  topRerank?: number;
+  maxIter?: number;
+}
+
+export interface ChatResponse {
+  conversationId: string;
+  answer: string;
+  citations: Citation[];
+}
+
+// Bluetooth enhancements (stubs)
+export interface DeviceRegistryEntry {
+  deviceId: string;
+  nickname?: string;
+  notes?: string;
+  lastSeen?: string; // ISO timestamp
+}
+
+export interface GattNote {
+  deviceId: string;
+  serviceUuid?: string;
+  characteristicUuid?: string;
+  note: string;
+  createdAt: string; // ISO timestamp
+}
+
+export type BluetoothAction = "scan" | "connect" | "disconnect" | "read" | "write" | "notify";
+
+export interface BluetoothToolRequest {
+  action: BluetoothAction;
+  params?: Record<string, unknown>;
+}
+
+export interface BluetoothToolResponse {
+  ok: boolean;
+  message: string;
+  data?: unknown;
+}

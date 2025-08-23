@@ -28,3 +28,21 @@ TOP_RERANK = "5"               # keep after rerank
 MODEL_GENERATION = "@cf/openai/gpt-oss-20b"
 MODEL_EMBEDDING = "@cf/baai/bge-large-en-v1.5"  # 1024 dims
 MODEL_RERANK = "@cf/baai/bge-reranker-base" 
+
+# Chat configuration (optional defaults)
+CHAT_TURN_WINDOW = "20"
+CHAT_TTL_DAYS = "30"
+
+[[kv_namespaces]]
+binding = "BT_RAG_CHAT_KV"
+id = "abc0e9df684a4bd489d0faab8fcfb56b"
+preview_id = "eccfd83c8a014355a5e49155a600e4dd"
+
+# Optional Durable Objects (disabled by default). Uncomment to enable and deploy with DO.
+# [durable_objects]
+# bindings = [
+#   { name = "CHAT_SESSIONS", class_name = "ChatSessionDO" }
+# ]
+# [[migrations]]
+# tag = "v1-chat-do"
+# new_classes = ["ChatSessionDO"]

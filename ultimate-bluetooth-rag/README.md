@@ -88,6 +88,62 @@ curl -s -X POST \
   https://YOUR_WORKER_URL/query | jq
 ```
 
+## Chat (multi-turn)
+
+Non-streaming JSON:
+```
+curl -s -X POST \
+  -H "content-type: application/json" \
+  -H "authorization: Bearer YOUR_TOKEN" \
+  -d '{"messages":[{"role":"user","content":"Explain ATT MTU trade-offs"}],"stream":false}' \
+  https://YOUR_WORKER_URL/chat | jq
+```
+
+Streaming (SSE) example in JavaScript:
+```js
+const res = await fetch('https://YOUR_WORKER_URL/chat', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json', 'authorization': 'Bearer YOUR_TOKEN' },
+  body: JSON.stringify({ messages: [{ role: 'user', content: 'Explain ATT MTU trade-offs' }], stream: true })
+});
+const reader = res.body.getReader();
+const decoder = new TextDecoder();
+let buffer = '';
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  buffer += decoder.decode(value, { stream: true });
+  // parse SSE lines here
+}
+```
+
+### Memory
+
+- Export conversation: `GET /memory/:conversationId`
+- Clear conversation: `DELETE /memory/:conversationId`
+
+Example non-stream cURL tests:
+```
+curl -s -X POST \
+  -H "content-type: application/json" \
+  -H "authorization: Bearer YOUR_TOKEN" \
+  -d '{"messages":[{"role":"user","content":"Pairing procedures overview"}],"stream":false}' \
+  https://YOUR_WORKER_URL/chat | jq
+
+curl -s -H "authorization: Bearer YOUR_TOKEN" https://YOUR_WORKER_URL/memory/CONV_ID | jq
+curl -s -X DELETE -H "authorization: Bearer YOUR_TOKEN" https://YOUR_WORKER_URL/memory/CONV_ID | jq
+```
+
+### Config
+
+- `CHAT_TURN_WINDOW` (default 20) and `CHAT_TTL_DAYS` (default 30) control memory behavior
+- Bind KV in `wrangler.toml`:
+```
+[[kv_namespaces]]
+binding = "BT_RAG_CHAT_KV"
+id = "bt-rag-chat-kv-dev"
+```
+
 ## Test from any device (mobile included)
 Share your deployed Worker URL (e.g., `https://bt-rag.hybridrag.workers.dev`). The UI is fully responsive and works on mobile.
 

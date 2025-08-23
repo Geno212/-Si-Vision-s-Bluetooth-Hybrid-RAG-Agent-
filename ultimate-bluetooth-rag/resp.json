@@ -1,0 +1,30 @@
+{
+  "conversationId": "c_20250812123310_hvy72k",
+  "answer": "**Missing information** [#1]\n\n- Exact names of the controller Clock‑Domain‑Crossing (CDC) blocks – the provided excerpts do not list any CDC block names. [#4]\n- The precise spec phrase for BEACON randomization from The Bluetooth Beacon Primer – the excerpts do not contain the wording. [#2]\n\n**Likely sources to obtain the missing details** [#1]\n\n- Full *Architecture and Design of a BLE Controller* PDF (look for sections titled “Clock Domain Crossing (CDC)”, “CDC blocks”, or “CDC design”). [#4]\n- Full *Bluetooth Beacon Primer* PDF (search for “randomization”, “beacon randomization”, or the section on “ADVERTISING WORKS” that discusses random offsets). [#2]",
+  "citations": [
+    {
+      "ref": "#1",
+      "id": "architecture-and-design-of-a-ble-controller-pdf::10",
+      "title": "Architecture and Design of a BLE Controller.pdf",
+      "source": "Architecture and Design of a BLE Controller.pdf"
+    },
+    {
+      "ref": "#2",
+      "id": "the-bluetooth-beacon-primer-pdf::0",
+      "title": "The Bluetooth Beacon Primer.pdf",
+      "source": "The Bluetooth Beacon Primer.pdf"
+    },
+    {
+      "ref": "#3",
+      "id": "the-bluetooth-beacon-primer-pdf::2",
+      "title": "The Bluetooth Beacon Primer.pdf",
+      "source": "The Bluetooth Beacon Primer.pdf"
+    },
+    {
+      "ref": "#4",
+      "id": "architecture-and-design-of-a-ble-controller-pdf::16",
+      "title": "Architecture and Design of a BLE Controller.pdf",
+      "source": "Architecture and Design of a BLE Controller.pdf"
+    }
+  ]
+}

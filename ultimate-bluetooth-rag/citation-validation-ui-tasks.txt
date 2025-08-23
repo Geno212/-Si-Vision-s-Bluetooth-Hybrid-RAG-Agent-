@@ -1,0 +1,19 @@
+# Citation Strictness, Validation, and UI/UX Tuning Tasks
+
+## Citation Strictness Improvements
+- [x] Enforce citation format: every technical step/claim must end with a citation in the required format ([#n] or [Wn]).
+- [x] Highlight or flag any step with a malformed or missing citation.
+- [x] Citation cross-check: validate that every citation refers to a real context block or web source.
+- [x] Flag orphan citations (citations not present in the context or web results).
+## Validation Logic Enhancements
+- [x] Advanced contradiction detection between steps and with context.
+- [x] Fact-checking: ensure each claim is supported by both context and web validation.
+- [x] Stepwise completeness: check for missing steps in technical procedures.
+
+## UI/UX Improvements
+- [x] Visually highlight uncited or incorrectly cited steps in the answer.
+- [x] Clickable citations: allow users to view the corresponding context or web snippet.
+- [x] Show validation and web validation notes in a dedicated panel or as inline annotations.
+
+---
+Mark each task as done after implementation or review.

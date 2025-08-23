@@ -1,6 +1,8 @@
 import { chunkText } from "./chunker";
-import type { Env, IngestRequestBody, QueryRequestBody, RetrievedChunk } from "./types";
+import type { Env, IngestRequestBody, QueryRequestBody, RetrievedChunk, ChatRequestBody, ChatResponse, Citation, ChatMessage, BluetoothToolRequest, BluetoothToolResponse } from "./types";
 import { embedText, rerank, synthesize, vectorizeQuery, vectorizeUpsert, numericEnv, expandQueries } from "./retrieval";
+import { AgentOrchestrator } from "./crew_agents";
+import { appendMessage, ensureConversation, exportConversation, getConversation, updateSummaryIfNeeded, clearConversation, saveConversation } from "./memory";
 
 function jsonResponse(obj: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(obj, null, 2), { headers: { "content-type": "application/json" }, ...init });
@@ -20,6 +22,101 @@ function requireAuth(request: Request, token?: string): boolean {
   if (!auth || !auth.toLowerCase().startsWith("bearer ")) return false;
   const provided = auth.slice("bearer ".length);
   return provided === token;
+}
+
+// Basic anonymous identity cookie for associating conversations with a user
+function getOrSetUserIdCookie(request: Request): { userId: string; setCookieHeader?: string } {
+  const cookies = request.headers.get("cookie") || request.headers.get("Cookie") || "";
+  const m = /(?:^|;\s*)bt_user_id=([^;]+)/i.exec(cookies);
+  if (m && m[1]) {
+    return { userId: decodeURIComponent(m[1]) };
+  }
+  const userId = `u_${Math.random().toString(36).slice(2, 10)}_${Date.now().toString(36)}`;
+  const setCookieHeader = `bt_user_id=${encodeURIComponent(userId)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 365}`;
+  return { userId, setCookieHeader };
+}
+
+// --- Streaming helpers (SSE and plain text) ---
+const textEncoder = new TextEncoder();
+
+function sseHeaders(): HeadersInit {
+  return {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    "x-no-compression": "1",
+  };
+}
+
+function encodeSSEData(data: string): Uint8Array {
+  // Prefix each line with 'data: ' to respect SSE framing
+  const payload = data.replace(/\r?\n/g, "\ndata: ");
+  return textEncoder.encode(`data: ${payload}\n\n`);
+}
+
+function encodeSSEEvent(event: string, data: string): Uint8Array {
+  const framed = `event: ${event}\n` + `data: ${data.replace(/\r?\n/g, "\ndata: ")}\n\n`;
+  return textEncoder.encode(framed);
+}
+
+/**
+ * Creates a Response that streams Server-Sent Events. Returns helpers to send data/events and to close the stream.
+ */
+function createSSEStream(): { response: Response; send: (data: string) => void; sendEvent: (event: string, data: string) => void; close: () => void } {
+  let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controllerRef = controller;
+      // Send an initial comment to establish the stream in some clients
+      controller.enqueue(textEncoder.encode(": connected\n\n"));
+    },
+    cancel() {
+      controllerRef = null;
+    },
+  });
+  const send = (data: string) => {
+    if (!controllerRef) return;
+    controllerRef.enqueue(encodeSSEData(data));
+  };
+  const sendEvent = (event: string, data: string) => {
+    if (!controllerRef) return;
+    controllerRef.enqueue(encodeSSEEvent(event, data));
+  };
+  const close = () => {
+    try { controllerRef?.close(); } catch {}
+    controllerRef = null;
+  };
+  const response = new Response(stream, { headers: sseHeaders() });
+  return { response, send, sendEvent, close };
+}
+
+/**
+ * Creates a plain text streaming Response (non-SSE). Useful for chunked text where SSE is not desired.
+ */
+function createTextStream(): { response: Response; sendText: (chunk: string) => void; close: () => void } {
+  let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) { controllerRef = controller; },
+    cancel() { controllerRef = null; }
+  });
+  const sendText = (chunk: string) => {
+    if (!controllerRef) return;
+    controllerRef.enqueue(textEncoder.encode(chunk));
+  };
+  const close = () => { try { controllerRef?.close(); } catch {} controllerRef = null; };
+  const response = new Response(stream, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-cache" } });
+  return { response, sendText, close };
+}
+
+/**
+ * Helper to choose between streaming (SSE) and JSON fallback.
+ */
+async function respondStreamOrJson(
+  stream: boolean | undefined,
+  buildStream: () => { response: Response },
+  buildJson: () => Promise<Response>
+): Promise<Response> {
+  if (stream) return buildStream().response;
+  return await buildJson();
 }
 
 async function handleHealth(): Promise<Response> {
@@ -70,6 +167,68 @@ async function handleIngest(request: Request, env: Env): Promise<Response> {
   }
 
   return jsonResponse({ ok: true, id, chunks: chunks.length, upserted: vectors.length });
+}
+
+function newConversationId(): string {
+  const date = new Date();
+  const iso = date.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+  const rand = Math.random().toString(36).slice(2, 8);
+  return `c_${iso}_${rand}`;
+}
+
+function getLastUserMessage(messages: ChatMessage[] = []): ChatMessage | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i]?.role === "user" && typeof messages[i]?.content === "string") return messages[i];
+  }
+  return null;
+}
+
+
+// --- CrewAI Multi-Agentic Chat Handler ---
+async function handleChat(request: Request, env: Env): Promise<Response> {
+  if (!requireAuth(request, env.API_AUTH_TOKEN)) return unauthorized();
+  const body = (await request.json().catch(() => ({}))) as ChatRequestBody;
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  if (messages.length === 0) return jsonResponse({ error: "Expected { messages }" }, { status: 400 });
+
+  const lastUser = getLastUserMessage(messages);
+  if (!lastUser) return jsonResponse({ error: "Expected at least one user message" }, { status: 400 });
+
+  const conversationId = body.conversationId && String(body.conversationId).trim() ? String(body.conversationId).trim() : newConversationId();
+  const stream = body.stream !== false; // default true
+  const maxIter = typeof body.maxIter === 'number' && body.maxIter > 0 ? Math.min(body.maxIter, 10) : 2;
+
+  // Memory: ensure conversation and append the latest user message, associate with anonymous userId
+  const { userId, setCookieHeader } = getOrSetUserIdCookie(request);
+  await ensureConversation(env, conversationId, userId);
+  await appendMessage(env, conversationId, { role: "user", content: lastUser.content });
+  await updateSummaryIfNeeded(env, conversationId);
+
+  // --- CrewAI Orchestrator ---
+  const orchestrator = new AgentOrchestrator();
+  const t0 = Date.now();
+  let chatResponse: ChatResponse;
+  try {
+    chatResponse = await orchestrator.processQuery(env, conversationId, String(lastUser.content || "").trim(), undefined, undefined, maxIter);
+  } catch (err: any) {
+    console.log("[Orchestrator] ERROR", err);
+    return jsonResponse({ error: String(err?.message ?? err) }, { status: 500 });
+  }
+  const ms = Date.now() - t0;
+  try { console.log("CREWAI_CHAT_ANSWER", JSON.stringify({ conversationId, ms, chars: chatResponse.answer.length, citations: chatResponse.citations.length })); } catch {}
+
+  // Persist assistant message and citations
+  await appendMessage(env, conversationId, { role: "assistant", content: chatResponse.answer });
+  try {
+    const convAfter = await getConversation(env, conversationId);
+    if (convAfter) {
+      convAfter.lastCitations = chatResponse.citations;
+      await saveConversation(env, convAfter);
+    }
+  } catch {}
+  const base = jsonResponse(chatResponse);
+  if (setCookieHeader) base.headers.set("set-cookie", setCookieHeader);
+  return base;
 }
 
 async function pickContext(env: Env, query: string, candidates: RetrievedChunk[], topRerank: number): Promise<Array<{ id: string; title?: string; source?: string; content: string }>> {
@@ -260,6 +419,19 @@ async function handleDiag(request: Request, env: Env): Promise<Response> {
   return jsonResponse({ ok: true, query, diag, vectorizeError, matches });
 }
 
+async function handleMemoryExport(request: Request, env: Env, conversationId: string): Promise<Response> {
+  if (!requireAuth(request, env.API_AUTH_TOKEN)) return unauthorized();
+  const conv = await exportConversation(env, conversationId);
+  if (!conv) return jsonResponse({ error: "Not found" }, { status: 404 });
+  return jsonResponse({ ok: true, conversation: conv });
+}
+
+async function handleMemoryClear(request: Request, env: Env, conversationId: string): Promise<Response> {
+  if (!requireAuth(request, env.API_AUTH_TOKEN)) return unauthorized();
+  const ok = await clearConversation(env, conversationId);
+  return jsonResponse({ ok });
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     try {
@@ -277,7 +449,25 @@ export default {
 
       if (url.pathname === "/health") return handleHealth();
       if (url.pathname === "/ingest" && request.method === "POST") return handleIngest(request, env);
+      if (url.pathname === "/chat" && request.method === "POST") return handleChat(request, env);
       if (url.pathname === "/query" && request.method === "POST") return handleQuery(request, env);
+      if (url.pathname === "/bluetooth/tool" && request.method === "POST") {
+        // Placeholder handler: no real device I/O in Workers; returns not-implemented
+        if (!requireAuth(request, env.API_AUTH_TOKEN)) return unauthorized();
+        const body = (await request.json().catch(() => ({}))) as BluetoothToolRequest;
+        const resp: BluetoothToolResponse = { ok: false, message: `Tool action '${String(body?.action || "").toLowerCase()}' is not supported in Workers runtime`, data: body };
+        return jsonResponse(resp, { status: 400 });
+      }
+      if (url.pathname.startsWith("/memory/") && request.method === "GET") {
+        const id = url.pathname.split("/")[2] || "";
+        if (!id) return jsonResponse({ error: "Missing conversationId" }, { status: 400 });
+        return handleMemoryExport(request, env, id);
+      }
+      if (url.pathname.startsWith("/memory/") && request.method === "DELETE") {
+        const id = url.pathname.split("/")[2] || "";
+        if (!id) return jsonResponse({ error: "Missing conversationId" }, { status: 400 });
+        return handleMemoryClear(request, env, id);
+      }
       if (url.pathname === "/debug/diag" && request.method === "POST") return handleDiag(request, env);
       return jsonResponse({ error: "Not found" }, { status: 404 });
     } catch (err: any) {

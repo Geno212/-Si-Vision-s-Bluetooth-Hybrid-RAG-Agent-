@@ -1,0 +1,20 @@
+\documentclass{article}
+\usepackage{enumitem}
+\title{Bluetooth Hybrid RAG Agent: Approach and Workflow}
+\author{Si-Vision}
+\date{August 2025}
+\begin{document}
+\maketitle
+\section*{Approach}
+We implement a modular Retrieval-Augmented Generation (RAG) backend for Bluetooth technical Q\&A, using multi-agent orchestration and advanced validation. The system integrates ingested documents and web search, with strict citation and validation logic, and a transparent, interactive UI.
+
+\section*{Workflow}
+\begin{enumerate}[leftmargin=*, itemsep=0.5em]
+  \item \textbf{User Query:} User submits a technical Bluetooth question via the web UI.
+  \item \textbf{Retrieval:} Relevant context is retrieved from ingested documents and web sources.
+  \item \textbf{Synthesis:} The Synthesis Agent generates a stepwise, cited answer.
+  \item \textbf{Validation:} The Validation Agent enforces citation format, checks for missing/incorrect citations, contradiction, and completeness.
+  \item \textbf{UI Feedback:} The UI highlights citation issues, enables citation context viewing, and displays validation notes.
+  \item \textbf{Iterative Feedback:} If validation fails, feedback is sent to the Synthesis Agent for answer refinement.
+\end{enumerate}
+\end{document}

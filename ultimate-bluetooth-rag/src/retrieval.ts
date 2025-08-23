@@ -157,15 +157,22 @@ export async function webSearchFallback(env: Env, query: string) {
   return null;
 }
 
-export async function synthesize(env: Env, query: string, contextBlocks: Array<{ id: string; title?: string; source?: string; content: string }>, webContext?: { context: string; sources: Array<{ title: string; link: string }>; }): Promise<string> {
+export async function synthesize(
+  env: Env,
+  query: string,
+  contextBlocks: Array<{ id: string; title?: string; source?: string; content: string }>,
+  webContext?: { context: string; sources: Array<{ title: string; link: string }>; },
+  memorySummary?: string
+): Promise<string> {
   const contextText = contextBlocks
     .map((b, i) => `[#${i + 1} ${b.title ?? b.id}${b.source ? ` | ${b.source}` : ""}]\n${b.content}`)
     .join("\n\n");
 
   const webText = webContext?.context ? `\n\nWeb results:\n${webContext.context}` : "";
+  const memoryText = memorySummary && memorySummary.trim() ? `\n\nConversation memory (for context, do not cite):\n${memorySummary.trim()}` : "";
 
-  const systemPrompt = `You are an expert Bluetooth assistant. Answer using ONLY the provided context. Prefer concise bullet points. After each factual sentence, include a citation [#n]/[Wn]. Quote exact technical names or identifiers verbatim with a citation. Do NOT add facts that are not present. When multiple sources appear, keep claims attributable to each source separate. If the context is insufficient for part of the question, explicitly state what is missing rather than guessing.`;
-  const userPrompt = `Question: ${query}\n\nContext:\n${contextText}${webText}`;
+  const systemPrompt = `You are an expert Bluetooth assistant. Answer using ONLY the provided document context. Prefer concise bullet points. After each factual sentence, include a citation [#n]/[Wn]. Quote exact technical names or identifiers verbatim with a citation. Do NOT add facts that are not present. When multiple sources appear, keep claims attributable to each source separate. If the context is insufficient for part of the question, explicitly state what is missing rather than guessing.`;
+  const userPrompt = `Question: ${query}\n\nContext:\n${contextText}${webText}${memoryText}`;
 
   const messages = [
     { role: "system", content: systemPrompt },

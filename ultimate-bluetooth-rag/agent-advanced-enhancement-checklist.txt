@@ -1,0 +1,17 @@
+# Agent Enhancement Checklist (Advanced)
+
+## Orchestrator
+- [x] Dynamic iteration limit: allow max feedback iterations to be set via UI input
+
+## Validation Agent
+- [x] Citation strictness: directly prompt SynthesisAgent to add missing citations
+- [x] Validation web search: another validation agent (validation agent web) trigger Serper web search always and make it validate current answer after the 1st validation as an additional validation layer
+
+## Logging
+- [x] Log agent execution times, error rates, and context block usage
+
+## User Feedback Loop
+- [ ] Allow end-users to provide feedback on answers; log feedback in a .txt file(will not implement now)
+
+---
+Mark each task as done after implementation.

@@ -1,0 +1,24 @@
+# Multi-Agent Enhancement Checklist
+
+## Retrieval Agent
+- [x] Semantic diversity: advanced clustering (protocol layer, topic, semantic similarity)
+- [x] Cross-document linking: merge related facts from different docs
+- [x] Context window optimization: maximize coverage of all question aspects
+- [x] Explicit section tagging: tag blocks with protocol layer, function, or topic
+
+## Synthesis Agent
+- [x] Stepwise reasoning: always structure as technical steps/procedures
+- [x] Citation enforcement: require citation for every technical claim/step
+- [x] Contradiction handling: present both sides if sources disagree
+- [x] Gap highlighting: explicitly state missing steps/context
+- [x] Technical glossary: add glossary for protocol-specific terms
+
+## Validation Agent
+- [x] Citation-claim matching: every claim/step has a citation
+- [x] Stepwise structure check: enforce answer is broken into steps/sections
+- [x] Contradiction detection: flag if conflicting info not surfaced
+- [x] Feedback loop: if validation fails, trigger re-synthesis with feedback
+
+## Orchestrator
+- [x] Iterative feedback: re-run synthesis with validation feedback (up to N times)
+- [x] Logging: log agent outputs and agent-to-agent messages/feedback
