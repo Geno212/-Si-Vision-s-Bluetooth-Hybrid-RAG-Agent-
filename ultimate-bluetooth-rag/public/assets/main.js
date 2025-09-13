@@ -90,6 +90,8 @@ function appendMessage(role, text, streaming=false) {
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
   return bubble;
+}
+
 // Highlight uncited/malformed steps, clickable citations, and inline validation notes
 function renderAssistantAnswer(container, answerText) {
   // Split out [Validation Notes] if present
@@ -100,8 +102,8 @@ function renderAssistantAnswer(container, answerText) {
   container.innerHTML = '';
   lines.forEach((line, idx) => {
     if (!line.trim()) return;
-    // Detect citation at end
-    const citationMatch = line.match(/\[(#\d+|W\d+)\]$/);
+    // Detect citation at end - handle both square brackets [#1] and Chinese brackets 【#1】
+    const citationMatch = line.match(/[\[\【](#\d+|W\d+)[\]\】]$/);
     let stepDiv = document.createElement('div');
     stepDiv.className = 'answer-step';
     // Highlight uncited or malformed steps
@@ -110,17 +112,18 @@ function renderAssistantAnswer(container, answerText) {
         stepDiv.classList.add('uncited-step');
       } else {
         // Check for malformed: citation not at end or multiple citations
-        const allMatches = [...line.matchAll(/\[(#\d+|W\d+)\]/g)];
-        if (allMatches.length > 1 || (allMatches.length === 1 && !line.trim().endsWith(allMatches[0][0]))) {
+        const allMatches = [...line.matchAll(/[\[\【](#\d+|W\d+)[\]\】]/g)];
+        if (allMatches.length > 1 || (allMatches.length === 1 && !line.trim().match(/[\[\【](#\d+|W\d+)[\]\】]$/))) {
           stepDiv.classList.add('malformed-citation');
         }
       }
     }
-    // Render clickable citations with type
-    let rendered = line.replace(/\[(#\d+|W\d+)\]/g, (m, ref) => {
+    // Render clickable citations with type - handle both bracket formats
+    let rendered = line.replace(/[\[\【](#\d+|W\d+)[\]\】]/g, (m, ref) => {
       let type = ref.startsWith('#') ? 'ingested' : 'web';
       let label = type === 'ingested' ? 'Ingested' : 'Web';
-      return `<span class=\"citation-link\" data-citation=\"${ref}\" data-type=\"${type}\" title=\"${label} citation\">${m}<span class=\"citation-type\">[${label}]</span></span>`;
+      console.log('Creating citation link:', { match: m, ref: ref, type: type, label: label });
+      return `<span class=\"citation-link\" data-citation=\"${ref}\" data-type=\"${type}\" title=\"${label} citation\" style=\"color: #0ea5e9; cursor: pointer; text-decoration: underline dotted;\">${m}<span class=\"citation-type\">[${label}]</span></span>`;
     });
     stepDiv.innerHTML = rendered;
     container.appendChild(stepDiv);
@@ -135,16 +138,20 @@ function renderAssistantAnswer(container, answerText) {
   // Robust event delegation for citation clicks
   if (!container._citationHandlerAttached) {
     container.addEventListener('click', function(e) {
+      console.log('Container clicked:', e.target);
       const target = e.target.closest('.citation-link');
+      console.log('Citation link target:', target);
       if (target) {
         const ref = target.getAttribute('data-citation');
         const type = target.getAttribute('data-type');
+        console.log('Citation clicked:', { ref, type });
         showCitationContext(ref, type);
         e.preventDefault();
         e.stopPropagation();
       }
     });
     container._citationHandlerAttached = true;
+    console.log('Citation handler attached to container:', container);
   }
 }
 
@@ -152,16 +159,39 @@ function renderAssistantAnswer(container, answerText) {
 function showCitationContext(ref, type) {
   // Try to find citation in the last citations panel
   const citations = window.lastCitations || [];
-  const c = citations.find(x => x.ref === ref);
+  console.log('Available citations:', citations);
+  console.log('Looking for ref:', ref);
+  const c = citations.find(x => x.ref === ref || x.id === ref);
+  console.log('Found citation:', c);
   let html = '';
   if (c) {
     let label = (ref.startsWith('#')) ? 'Ingested' : 'Web';
-    html = `<b>${c.title || c.id}</b><br/><i>${c.source || ''}</i><br/><code>${c.id}</code><br/><span class='citation-label'>${label} citation</span>`;
+    const content = c.content || c.text || 'Content not available';
+    // Truncate very long content for better display
+    const displayContent = content.length > 2000 ? content.substring(0, 2000) + '...' : content;
+    html = `
+      <div class="citation-header">
+        <h4>${c.title || c.id}</h4>
+        <p class="citation-source"><strong>Source:</strong> ${c.source || 'Unknown'}</p>
+        <p class="citation-id"><strong>ID:</strong> <code>${c.id}</code></p>
+        <span class="citation-label">${label} citation</span>
+      </div>
+      <div class="citation-content">
+        <h5>Referenced Content:</h5>
+        <div class="content-text">${displayContent.replace(/\n/g, '<br>')}</div>
+      </div>
+    `;
   } else {
     let label = (ref.startsWith('#')) ? 'Ingested' : 'Web';
-    html = `Citation <b>${ref}</b> not found in context.<br/><span class='citation-label'>${label} citation</span>`;
+    html = `
+      <div class="citation-header">
+        <h4>Citation ${ref}</h4>
+        <p>Citation not found in context.</p>
+        <span class="citation-label">${label} citation</span>
+      </div>
+    `;
   }
-  showModal('Citation Context', html);
+  showModal('Citation Reference', html);
 }
 
 // Simple modal implementation
@@ -173,13 +203,25 @@ function showModal(title, html) {
     modal.className = 'modal-panel';
     modal.innerHTML = `<div class="modal-content"><span class="modal-close">&times;</span><h3></h3><div class="modal-body"></div></div>`;
     document.body.appendChild(modal);
-    modal.querySelector('.modal-close').onclick = () => { modal.style.display = 'none'; };
-    modal.onclick = (e) => { if (e.target === modal) modal.style.display = 'none'; };
   }
+  
+  // Always re-attach event handlers to ensure they work
+  const closeBtn = modal.querySelector('.modal-close');
+  closeBtn.onclick = () => { 
+    console.log('Close button clicked');
+    modal.style.display = 'none'; 
+  };
+  modal.onclick = (e) => { 
+    if (e.target === modal) {
+      console.log('Modal background clicked');
+      modal.style.display = 'none'; 
+    }
+  };
+  
   modal.querySelector('h3').innerHTML = title;
   modal.querySelector('.modal-body').innerHTML = html;
   modal.style.display = 'block';
-}
+  console.log('Modal displayed');
 }
 
 function clearChat() {

@@ -109,7 +109,7 @@ export class AgentOrchestrator {
       if (!feedback.length) break;
     }
   answer = validation ? validation.validated : "";
-  citations = retrieval && retrieval.contextBlocks ? retrieval.contextBlocks.map((c: any, i: number) => ({ ref: `#${i + 1}`, id: c.id, title: c.title, source: c.source })) : [];
+  citations = retrieval && retrieval.contextBlocks ? retrieval.contextBlocks.map((c: any, i: number) => ({ ref: `#${i + 1}`, id: c.id, title: c.title, source: c.source, content: c.content })) : [];
     // Log all agent outputs and metrics
     console.log("[Orchestrator] Final answer", { answerLength: answer.length, citations: citations.length, lastSynthesisNotes, lastValidationNotes });
     console.log('[Metrics] RetrievalAgent', {

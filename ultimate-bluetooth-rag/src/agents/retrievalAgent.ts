@@ -1,5 +1,5 @@
 import type { Env, RetrievedChunk } from "../types";
-import { embedText, expandQueries, vectorizeQuery, rerank } from "../retrieval";
+import { embedText, expandQueries, vectorizeQuery, rerank, enhancedSemanticSearch } from "../retrieval";
 
 export interface RetrievalResult {
   contextBlocks: Array<{ id: string; title?: string; source?: string; content: string }>;
@@ -11,28 +11,73 @@ export interface RetrievalResult {
 export class KnowledgeRetrievalAgent {
   async execute(env: Env, query: string): Promise<RetrievalResult> {
     console.log("[RetrievalAgent] Start", { query });
-    // 1. Query expansion for recall
-    const variants = await expandQueries(env, query, 3);
-    const variantTexts = [query, ...variants];
-    // 2. Embed and retrieve for each variant
-    const vectors = await Promise.all(variantTexts.map((t) => embedText(env, t).catch(() => [] as number[])));
-    const perQueryResults = await Promise.all(
-      vectors.filter((v) => Array.isArray(v) && v.length > 0).map((v) => vectorizeQuery(env, v as number[], 20))
-    );
-    // 3. RRF fusion and deduplication
-    const K = 60;
-    const fused: Record<string, { item: RetrievedChunk; score: number }> = {};
-    perQueryResults.forEach((list) => {
-      list.forEach((m, idx) => {
-        const rrf = 1 / (K + idx + 1);
-        const existing = fused[m.id];
-        if (!existing) fused[m.id] = { item: m, score: rrf }; else fused[m.id].score += rrf;
+    
+    let candidates: RetrievedChunk[] = [];
+    
+    try {
+      // Primary: Enhanced BGE-M3 semantic search with query-context scoring
+      console.log("[RetrievalAgent] Using enhanced BGE-M3 search");
+      candidates = await enhancedSemanticSearch(env, query, 20, true);
+      
+      // If enhanced search returns few results, fallback to multi-query approach
+      if (candidates.length < 10) {
+        console.log("[RetrievalAgent] Low results from enhanced search, using fallback with query expansion");
+        // 1. Query expansion for recall
+        const variants = await expandQueries(env, query, 3);
+        const variantTexts = [query, ...variants];
+        // 2. Embed and retrieve for each variant with BGE-M3 query prefix
+        const vectors = await Promise.all(variantTexts.map((t) => embedText(env, t, true).catch(() => [] as number[])));
+        const perQueryResults = await Promise.all(
+          vectors.filter((v) => Array.isArray(v) && v.length > 0).map((v) => vectorizeQuery(env, v as number[], 20))
+        );
+        // 3. RRF fusion and deduplication
+        const K = 60;
+        const fused: Record<string, { item: RetrievedChunk; score: number }> = {};
+        perQueryResults.forEach((list) => {
+          list.forEach((m, idx) => {
+            const rrf = 1 / (K + idx + 1);
+            const existing = fused[m.id];
+            if (!existing) fused[m.id] = { item: m, score: rrf }; else fused[m.id].score += rrf;
+          });
+        });
+        const fallbackCandidates = Object.values(fused)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 20)
+          .map((x) => x.item);
+        
+        // Merge with enhanced search results, preferring higher scores
+        const allCandidates = [...candidates, ...fallbackCandidates];
+        const deduped: Record<string, RetrievedChunk> = {};
+        allCandidates.forEach(c => {
+          if (!deduped[c.id] || c.score > deduped[c.id].score) {
+            deduped[c.id] = c;
+          }
+        });
+        candidates = Object.values(deduped).sort((a, b) => b.score - a.score).slice(0, 20);
+      }
+    } catch (error) {
+      console.error("[RetrievalAgent] Enhanced search failed, using basic approach:", error);
+      // Complete fallback to original approach
+      const variants = await expandQueries(env, query, 3);
+      const variantTexts = [query, ...variants];
+      const vectors = await Promise.all(variantTexts.map((t) => embedText(env, t).catch(() => [] as number[])));
+      const perQueryResults = await Promise.all(
+        vectors.filter((v) => Array.isArray(v) && v.length > 0).map((v) => vectorizeQuery(env, v as number[], 20))
+      );
+      const K = 60;
+      const fused: Record<string, { item: RetrievedChunk; score: number }> = {};
+      perQueryResults.forEach((list) => {
+        list.forEach((m, idx) => {
+          const rrf = 1 / (K + idx + 1);
+          const existing = fused[m.id];
+          if (!existing) fused[m.id] = { item: m, score: rrf }; else fused[m.id].score += rrf;
+        });
       });
-    });
-    let candidates = Object.values(fused)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 20)
-      .map((x) => x.item);
+      candidates = Object.values(fused)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 20)
+        .map((x) => x.item);
+    }
     // 4. Semantic clustering (advanced: by protocol layer/topic/semantic similarity)
     // Try to extract protocol layer/topic from metadata or content
     function extractTopic(chunk: RetrievedChunk): string {
@@ -106,7 +151,7 @@ export class KnowledgeRetrievalAgent {
     if (Object.keys(clusters).length < 2) knowledgeGaps.push("Low diversity in sources; may miss cross-protocol insights.");
     if (contextBlocks.length === 0) knowledgeGaps.push("No relevant context found in RAG index.");
     const topScore = candidates[0]?.score ?? 0;
-    retrievalNotes.push(`Clusters: ${Object.keys(clusters).length} [${Object.keys(clusters).join(", ")}], TopScore: ${topScore}`);
+    retrievalNotes.push(`BGE-M3 Enhanced Retrieval - Clusters: ${Object.keys(clusters).length} [${Object.keys(clusters).join(", ")}], TopScore: ${topScore.toFixed(3)}`);
     if (crossLinks.length) retrievalNotes.push(...crossLinks);
     console.log("[RetrievalAgent] Done", { contextBlocks: contextBlocks.length, topScore, knowledgeGaps, retrievalNotes });
     return { contextBlocks, topScore, retrievalNotes, knowledgeGaps };

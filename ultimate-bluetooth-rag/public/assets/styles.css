@@ -56,7 +56,9 @@
   border-radius: 12px;
   padding: 24px 32px;
   min-width: 320px;
-  max-width: 90vw;
+  max-width: 80vw;
+  max-height: 80vh;
+  overflow-y: auto;
   box-shadow: 0 8px 32px #0008;
   position: relative;
 }
@@ -67,6 +69,47 @@
   font-size: 24px;
   color: var(--muted);
   cursor: pointer;
+}
+
+/* Citation modal enhancements */
+.citation-header {
+  border-bottom: 1px solid var(--ring);
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+}
+
+.citation-header h4 {
+  margin: 0 0 8px 0;
+  color: var(--accent);
+  font-size: 18px;
+}
+
+.citation-source, .citation-id {
+  margin: 4px 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.citation-content {
+  margin-top: 16px;
+}
+
+.citation-content h5 {
+  margin: 0 0 12px 0;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.content-text {
+  background: var(--surface);
+  border: 1px solid var(--ring);
+  border-radius: 8px;
+  padding: 16px;
+  line-height: 1.6;
+  font-size: 14px;
+  color: var(--text);
+  max-height: 400px;
+  overflow-y: auto;
 }
 :root{--bg:#0b1220;--panel:#0f172a;--panel-2:#0a1222;--text:#e5e7eb;--muted:#94a3b8;--accent:#2dd4bf;--accent-2:#38bdf8;--danger:#f43f5e;--surface:#0b1628;--ring:#1e293b}
 *{box-sizing:border-box}

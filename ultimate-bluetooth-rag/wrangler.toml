@@ -24,14 +24,20 @@ MIN_RANK_SCORE = "0.22"        # if top score < threshold → web fallback
 TOP_K = "20"                   # ANN candidates to fetch
 TOP_RERANK = "5"               # keep after rerank
 
-# Model choices (Workers AI)
-MODEL_GENERATION = "@cf/openai/gpt-oss-20b"
-MODEL_EMBEDDING = "@cf/baai/bge-large-en-v1.5"  # 1024 dims
-MODEL_RERANK = "@cf/baai/bge-reranker-base" 
+# Model choices (Workers AI) - UPGRADED TO 120B
+MODEL_GENERATION = "@cf/openai/gpt-oss-120b"    # Enhanced reasoning model
+MODEL_EMBEDDING = "@cf/baai/bge-m3"             # Multi-functionality embedding
+MODEL_RERANK = "@cf/baai/bge-reranker-base"     # Keep existing reranker 
 
 # Chat configuration (optional defaults)
 CHAT_TURN_WINDOW = "20"
 CHAT_TTL_DAYS = "30"
+
+# Reasoning configuration for GPT OSS 120B
+REASONING_EFFORT_COMPLEX = "high"      # For complex protocol analysis
+REASONING_EFFORT_SYNTHESIS = "medium"  # For answer synthesis
+REASONING_EFFORT_VALIDATION = "low"    # For simple validations
+REASONING_SUMMARY_LEVEL = "detailed"   # For debugging and transparency
 
 [[kv_namespaces]]
 binding = "BT_RAG_CHAT_KV"

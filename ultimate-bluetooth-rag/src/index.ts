@@ -4,8 +4,45 @@ import { embedText, rerank, synthesize, vectorizeQuery, vectorizeUpsert, numeric
 import { AgentOrchestrator } from "./crew_agents";
 import { appendMessage, ensureConversation, exportConversation, getConversation, updateSummaryIfNeeded, clearConversation, saveConversation } from "./memory";
 
+function cleanText(text: string): string {
+  if (!text) return text;
+  
+  // Fix common UTF-8 encoding issues where special chars got corrupted
+  return text
+    // Fix bullet points and dashes
+    .replace(/â¢/g, '•')           // bullet point
+    .replace(/â€¢/g, '•')         // bullet point variant
+    .replace(/â€"/g, '—')         // em dash
+    .replace(/â€"/g, '–')         // en dash
+    .replace(/â€™/g, "'")         // right single quotation mark
+    .replace(/â€œ/g, '"')         // left double quotation mark
+    .replace(/â€?/g, '"')         // right double quotation mark
+    .replace(/â€¦/g, '…')         // horizontal ellipsis
+    
+    // Fix common letter combinations
+    .replace(/Ã¡/g, 'á')          // a with acute
+    .replace(/Ã©/g, 'é')          // e with acute
+    .replace(/Ã­/g, 'í')          // i with acute
+    .replace(/Ã³/g, 'ó')          // o with acute
+    .replace(/Ãº/g, 'ú')          // u with acute
+    .replace(/Ã±/g, 'ñ')          // n with tilde
+    .replace(/Ã /g, 'à')          // a with grave
+    .replace(/Ã¢/g, 'â')          // a with circumflex
+    .replace(/Ã§/g, 'ç')          // c with cedilla
+    
+    // Fix other common corruptions
+    .replace(/â/g, '-')           // various dash variants
+    .replace(/â¯/g, ' ')          // narrow no-break space
+    .replace(/Â /g, ' ')          // non-breaking space
+    .replace(/â\s/g, '• ')        // bullet with space
+    
+    // Clean up multiple spaces and normalize whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function jsonResponse(obj: unknown, init: ResponseInit = {}): Response {
-  return new Response(JSON.stringify(obj, null, 2), { headers: { "content-type": "application/json" }, ...init });
+  return new Response(JSON.stringify(obj, null, 2), { headers: { "content-type": "application/json; charset=utf-8" }, ...init });
 }
 
 function htmlResponse(text: string, init: ResponseInit = {}): Response {
@@ -130,15 +167,20 @@ async function handleIngest(request: Request, env: Env): Promise<Response> {
 
   const { id, text, title, source } = body;
 
+  // Clean text before chunking to prevent encoding issues
+  const cleanedText = cleanText(text);
+  
   // Chunk
-  const chunks = chunkText(text);
+  const chunks = chunkText(cleanedText);
   try { console.log("INGEST", JSON.stringify({ id, title, source, chunks: chunks.length })); } catch {}
 
   // Embed + upsert sequentially (safer on free tier)
   const vectors: Array<{ id: string; values: number[]; metadata: Record<string, unknown> }> = [];
   let index = 0;
   for (const c of chunks) {
-    const emb = await embedText(env, c.content);
+    // Clean chunk content as well
+    const cleanedContent = cleanText(c.content);
+    const emb = await embedText(env, cleanedContent);
     const vecId = `${id}::${index}`;
     vectors.push({
       id: vecId,
@@ -150,7 +192,7 @@ async function handleIngest(request: Request, env: Env): Promise<Response> {
         chunk_index: index,
         offset: c.offset,
         length: c.length,
-        content: c.content,
+        content: cleanedContent,
       },
     });
     index += 1;
@@ -217,8 +259,15 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   const ms = Date.now() - t0;
   try { console.log("CREWAI_CHAT_ANSWER", JSON.stringify({ conversationId, ms, chars: chatResponse.answer.length, citations: chatResponse.citations.length })); } catch {}
 
+  // Debug: Check what's in the citations from crew agents
+  console.log("CREW CITATIONS DEBUG:", JSON.stringify(chatResponse.citations.slice(0, 3), null, 2));
+
+  // Clean the answer text before persisting and returning
+  const cleanedAnswer = cleanText(chatResponse.answer);
+  chatResponse.answer = cleanedAnswer;
+
   // Persist assistant message and citations
-  await appendMessage(env, conversationId, { role: "assistant", content: chatResponse.answer });
+  await appendMessage(env, conversationId, { role: "assistant", content: cleanedAnswer });
   try {
     const convAfter = await getConversation(env, conversationId);
     if (convAfter) {
@@ -348,16 +397,25 @@ async function handleQuery(request: Request, env: Env): Promise<Response> {
     } catch {}
   }
 
-  const answer = await synthesize(env, query, contextBlocks);
+  const synthesisResult = await synthesize(env, query, contextBlocks);
   const ms = Date.now() - t0;
-  try { console.log("RAG_ANSWER", JSON.stringify({ ms, chars: answer.length, citations: contextBlocks.length })); } catch {}
+  try { console.log("RAG_ANSWER", JSON.stringify({ ms, chars: synthesisResult.answer.length, citations: contextBlocks.length, reasoning: !!synthesisResult.reasoning_summary })); } catch {}
 
   return jsonResponse({
     ok: true,
     query,
     topScore,
-    citations: contextBlocks.map((c, i) => ({ ref: `#${i + 1}`, id: c.id, title: c.title, source: c.source })),
-    answer,
+    citations: contextBlocks.map((c, i) => {
+      console.log(`Citation ${i + 1} structure:`, JSON.stringify({ id: c.id, hasContent: !!c.content, contentLength: c.content?.length, title: c.title, source: c.source }, null, 2));
+      return { 
+        ref: `#${i + 1}`, 
+        id: c.id, 
+        title: c.title ? cleanText(c.title) : c.id, 
+        source: c.source ? cleanText(c.source) : 'Unknown',
+        content: c.content ? cleanText(c.content) : 'Content not available' // Clean content for modal display
+      }
+    }),
+    answer: cleanText(synthesisResult.answer),
   });
 }
 

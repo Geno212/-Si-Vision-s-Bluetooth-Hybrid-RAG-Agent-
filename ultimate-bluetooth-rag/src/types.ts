@@ -18,6 +18,12 @@ export interface Env {
   CF_ACCOUNT_ID?: string;
   CF_API_TOKEN?: string;
 
+  // Reasoning configuration for GPT OSS 120B
+  REASONING_EFFORT_COMPLEX?: string;
+  REASONING_EFFORT_SYNTHESIS?: string;
+  REASONING_EFFORT_VALIDATION?: string;  
+  REASONING_SUMMARY_LEVEL?: string;
+
   // Chat memory bindings (optional; added by conversational feature)
   BT_RAG_CHAT_KV?: KVNamespace;
   CHAT_SESSIONS?: DurableObjectNamespace;
@@ -152,6 +158,39 @@ export type BluetoothAction = "scan" | "connect" | "disconnect" | "read" | "writ
 export interface BluetoothToolRequest {
   action: BluetoothAction;
   params?: Record<string, unknown>;
+}
+
+// Enhanced GPT OSS 120B reasoning types
+export interface ReasoningParameters {
+  effort?: "low" | "medium" | "high";
+  summary?: "auto" | "concise" | "detailed";
+}
+
+export interface EnhancedGenerationInput {
+  input: string | Array<{ role: string; content: string }>;
+  reasoning?: ReasoningParameters;
+  temperature?: number;
+  max_tokens?: number;
+}
+
+export interface ReasoningResponse {
+  response: string;
+  reasoning_summary?: string;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}
+
+// Agent decision transparency types
+export interface AgentDecision {
+  agent: string;
+  task: string;
+  reasoning_effort: string;
+  reasoning_summary?: string;
+  timestamp: string;
+  cost_estimate?: number;
 }
 
 export interface BluetoothToolResponse {

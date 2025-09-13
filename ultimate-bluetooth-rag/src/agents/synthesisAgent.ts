@@ -6,7 +6,7 @@ import { synthesize } from "../retrieval";
 type ContextBlock = { id: string; title?: string; source?: string; content: string; sectionTag?: string };
 
 export class SynthesisAgent {
-  async execute(env: Env, query: string, retrieval: RetrievalResult, webContext?: any, memorySummary?: string): Promise<{ answer: string; synthesisNotes: string[]; } > {
+  async execute(env: Env, query: string, retrieval: RetrievalResult, webContext?: any, memorySummary?: string): Promise<{ answer: string; synthesisNotes: string[]; reasoning_summary?: string; } > {
     console.log("[SynthesisAgent] Start", { query, contextBlocks: retrieval.contextBlocks.length, web: !!webContext });
     // Compose a technical, stepwise prompt with all enhancements
     let prompt = "";
@@ -29,8 +29,13 @@ export class SynthesisAgent {
     }
     // Add section tags to context blocks for more structured synthesis
   const contextBlocks = (retrieval.contextBlocks as ContextBlock[]).map(b => ({ ...b, content: `[Section: ${b.sectionTag || "unknown"}]\n${b.content}` }));
-    // Call the synthesize function with the enhanced prompt
-    const answer = await synthesize(env, query + prompt, contextBlocks, webContext, memorySummary);
+    // Call the synthesize function with enhanced reasoning for complex technical synthesis
+    const reasoningEffort = env.REASONING_EFFORT_SYNTHESIS as "low" | "medium" | "high" || "medium";
+    const result = await synthesize(env, query + prompt, contextBlocks, webContext, memorySummary, reasoningEffort);
+    
+    const answer = result.answer;
+    const reasoning_summary = result.reasoning_summary;
+    
     // Synthesis notes for validation
     const synthesisNotes = [];
     if (answer.includes("missing") || answer.includes("insufficient")) synthesisNotes.push("Synthesis flagged missing context.");
@@ -41,7 +46,19 @@ export class SynthesisAgent {
     if (!/step|procedure|first|second|finally|conclusion|summary/i.test(answer)) synthesisNotes.push("Answer may lack stepwise structure.");
     // Check for contradiction handling
     if (/disagree|conflict|contradict/i.test(answer)) synthesisNotes.push("Contradiction(s) detected and surfaced.");
-    console.log("[SynthesisAgent] Done", { chars: answer.length, synthesisNotes });
-    return { answer, synthesisNotes };
+    
+    // Add reasoning transparency
+    if (reasoning_summary) {
+      synthesisNotes.push(`Reasoning: ${reasoning_summary}`);
+    }
+    
+    console.log("[SynthesisAgent] Done", { 
+      chars: answer.length, 
+      synthesisNotes, 
+      reasoning_effort: reasoningEffort,
+      has_reasoning_summary: !!reasoning_summary 
+    });
+    
+    return { answer, synthesisNotes, reasoning_summary };
   }
 }
