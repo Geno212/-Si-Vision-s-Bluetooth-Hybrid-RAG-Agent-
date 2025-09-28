@@ -32,6 +32,13 @@ export interface Env {
 // Minimal R2 bucket type (available in Workers runtime)
 export interface R2Bucket {
   put(key: string, value: string | ArrayBuffer | ReadableStream, options?: { httpMetadata?: { contentType?: string } }): Promise<void>;
+  get(key: string): Promise<R2Object | null>;
+  delete(key: string): Promise<void>;
+}
+
+export interface R2Object {
+  arrayBuffer(): Promise<ArrayBuffer>;
+  text(): Promise<string>;
 }
 
 export type JsonObject = Record<string, unknown>;

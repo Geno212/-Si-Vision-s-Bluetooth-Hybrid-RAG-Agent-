@@ -1,8 +1,9 @@
 import { chunkText } from "./chunker";
 import type { Env, IngestRequestBody, QueryRequestBody, RetrievedChunk, ChatRequestBody, ChatResponse, Citation, ChatMessage, BluetoothToolRequest, BluetoothToolResponse } from "./types";
-import { embedText, rerank, synthesize, vectorizeQuery, vectorizeUpsert, numericEnv, expandQueries } from "./retrieval";
+import { embedText, embedTextBatch, embedTextSingle, rerank, synthesize, vectorizeQuery, vectorizeUpsert, numericEnv, expandQueries } from "./retrieval";
 import { AgentOrchestrator } from "./crew_agents";
 import { appendMessage, ensureConversation, exportConversation, getConversation, updateSummaryIfNeeded, clearConversation, saveConversation } from "./memory";
+import { handleListDocuments, handleDocumentStats, handleDeleteDocument, handleCleanupAll } from "./admin";
 
 function cleanText(text: string): string {
   if (!text) return text;
@@ -42,7 +43,7 @@ function cleanText(text: string): string {
 }
 
 function jsonResponse(obj: unknown, init: ResponseInit = {}): Response {
-  return new Response(JSON.stringify(obj, null, 2), { headers: { "content-type": "application/json; charset=utf-8" }, ...init });
+  return new Response(JSON.stringify(obj, null, 2), { headers: { "content-type": "application/json" }, ...init });
 }
 
 function htmlResponse(text: string, init: ResponseInit = {}): Response {
@@ -160,6 +161,263 @@ async function handleHealth(): Promise<Response> {
   return jsonResponse({ ok: true, message: "bt-rag healthy" });
 }
 
+async function handleR2Upload(request: Request, env: Env): Promise<Response> {
+  try {
+    const formData = await request.formData();
+    const file = formData.get('file') as File;
+    
+    if (!file) {
+      return jsonResponse({ error: "No file provided" }, { status: 400 });
+    }
+
+    // Generate unique filename
+    const timestamp = Date.now();
+    const filename = `uploads/${timestamp}-${file.name}`;
+    
+    // Upload to R2
+    const arrayBuffer = await file.arrayBuffer();
+    await env.DOCS_BUCKET.put(filename, arrayBuffer, {
+      httpMetadata: {
+        contentType: file.type || 'application/octet-stream',
+      },
+    });
+
+    return jsonResponse({ 
+      ok: true, 
+      message: "File uploaded successfully",
+      filename: filename,
+      size: arrayBuffer.byteLength
+    });
+  } catch (err: any) {
+    console.error("R2 upload error:", err);
+    return jsonResponse({ error: String(err?.message ?? err) }, { status: 500 });
+  }
+}
+
+async function handleR2Process(request: Request, env: Env): Promise<Response> {
+  try {
+    const { filename } = await request.json() as { filename: string };
+    
+    if (!filename) {
+      return jsonResponse({ error: "No filename provided" }, { status: 400 });
+    }
+
+    // Get file from R2
+    const object = await env.DOCS_BUCKET.get(filename);
+    if (!object) {
+      return jsonResponse({ error: "File not found in R2" }, { status: 404 });
+    }
+
+    const arrayBuffer = await object.arrayBuffer();
+    const file = new File([arrayBuffer], filename.split('/').pop() || 'document');
+
+    // Process the same way as handlePublicIngest but with better memory management
+    const formData = new FormData();
+    formData.append('file', file);
+
+    // Create a new request with the file data
+    const ingestRequest = new Request(request.url, {
+      method: 'POST',
+      body: formData
+    });
+
+    // Process in chunks to avoid memory issues
+    return await processFileInChunks(ingestRequest, env, filename);
+  } catch (err: any) {
+    console.error("R2 process error:", err);
+    return jsonResponse({ error: String(err?.message ?? err) }, { status: 500 });
+  }
+}
+
+async function processFileInChunks(request: Request, env: Env, sourceFilename: string): Promise<Response> {
+  console.log(`[R2_PROCESS] Starting R2 file processing: ${sourceFilename}`);
+  
+  // Add timeout wrapper to prevent hanging - increased for large documents
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error('Processing timeout after 15 minutes')), 15 * 60 * 1000);
+  });
+  
+  const processingPromise = async (): Promise<Response> => {
+    try {
+      const formData = await request.formData();
+      const file = formData.get('file') as File;
+      
+      if (!file) {
+        return jsonResponse({ error: "No file provided" }, { status: 400 });
+      }
+
+      console.log(`[R2_PROCESS] Processing file from R2: ${sourceFilename}, size: ${file.size} bytes`);
+
+      const arrayBuffer = await file.arrayBuffer();
+      
+      // Handle different file types properly
+      let textContent: string;
+      const fileExtension = sourceFilename.toLowerCase().split('.').pop();
+      
+      console.log(`[R2_PROCESS] File type detected: ${fileExtension}`);
+      
+      if (fileExtension === 'pdf') {
+        // For PDFs, we need proper text extraction - for now, use a simplified approach
+        // Note: In production, you'd want to use pdf-parse or similar library
+        console.log(`[R2_PROCESS] WARNING: PDF text extraction is simplified - may not work properly`);
+        console.log(`[R2_PROCESS] Consider uploading the PDF as text or using proper PDF parser`);
+        const uint8Array = new Uint8Array(arrayBuffer);
+        textContent = new TextDecoder('utf-8', { ignoreBOM: true }).decode(uint8Array);
+        
+        // Basic PDF text extraction attempt
+        const textMatch = textContent.match(/stream[\s]*(.+?)[\s]*endstream/g);
+        if (textMatch && textMatch.length > 0) {
+          textContent = textMatch.map(match => match.replace(/stream|endstream/g, '')).join('\n');
+        }
+      } else {
+        // For text files, documents, etc.
+        const uint8Array = new Uint8Array(arrayBuffer);
+        textContent = new TextDecoder('utf-8', { ignoreBOM: true }).decode(uint8Array);
+      }
+
+      const cleanedText = cleanText(textContent);
+      console.log(`[R2_PROCESS] Text extracted, length: ${cleanedText.length} characters`);
+      
+      if (cleanedText.length < 50) {
+        throw new Error(`Text extraction failed or document too short (${cleanedText.length} chars). Consider uploading as text file.`);
+      }
+
+      const chunks = chunkText(cleanedText, { maxChars: 1200, overlapChars: 200 }); // Use same settings as main ingestion
+      console.log(`[R2_PROCESS] Created ${chunks.length} chunks`);
+
+      let successCount = 0;
+      let errorCount = 0;
+      const batchSize = 25; // Larger batches for faster processing
+      
+      console.log(`[R2_PROCESS] Using batch size: ${batchSize} (optimized for BGE-Large model)`);
+
+      // Process chunks in batches using improved system
+      for (let i = 0; i < chunks.length; i += batchSize) {
+        const batch = chunks.slice(i, i + batchSize);
+        const batchNumber = Math.floor(i / batchSize) + 1;
+        const totalBatches = Math.ceil(chunks.length / batchSize);
+        
+        console.log(`[R2_PROCESS] Processing batch ${batchNumber}/${totalBatches} (chunks ${i + 1}-${Math.min(i + batchSize, chunks.length)}/${chunks.length})`);
+        
+        try {
+          // Extract text content for embedding
+          const texts = batch.map(chunk => chunk.content);
+          
+          console.log(`[R2_PROCESS] Batch ${batchNumber} text lengths: [${texts.map(t => t.length).join(', ')}]`);
+          
+          // Use improved batch embedding with enhanced logging
+          const startTime = Date.now();
+          const embeddings = await embedTextBatch(env, texts);
+          const embeddingTime = Date.now() - startTime;
+          
+          console.log(`[R2_PROCESS] Batch ${batchNumber} embedding completed in ${embeddingTime}ms`);
+          
+          if (embeddings.length !== texts.length) {
+            console.warn(`[R2_PROCESS] Embedding count mismatch: ${embeddings.length} vs ${texts.length}`);
+          }
+
+          // Prepare vectors for upsert
+          const vectors = batch.map((chunk, idx) => ({
+            id: `${file.name}-chunk-${i + idx}`,
+            values: embeddings[idx] || new Array(1024).fill(0), // BGE-Large produces 1024-dim vectors
+            metadata: {
+              title: file.name,
+              source: sourceFilename,
+              content: chunk.content,
+              chunk_index: i + idx,
+              total_chunks: chunks.length,
+            }
+          }));
+
+          // Upsert to vector database
+          console.log(`[R2_PROCESS] Upserting batch ${batchNumber} with ${vectors.length} vectors...`);
+          await vectorizeUpsert(env, vectors);
+          successCount += batch.length;
+          console.log(`[R2_PROCESS] Batch ${batchNumber} completed successfully. Total success: ${successCount}/${chunks.length}`);
+
+          // Shorter delay since BGE-Large calls are already slow
+          if (i + batchSize < chunks.length) {
+            console.log(`[R2_PROCESS] Pausing 5 seconds before next batch...`);
+            await new Promise(resolve => setTimeout(resolve, 5000)); // 5 seconds delay
+          }
+          
+        } catch (batchError: any) {
+          console.error(`[R2_PROCESS] Batch ${batchNumber} failed:`, batchError.message);
+          console.error(`[R2_PROCESS] Error details:`, batchError.stack || batchError);
+          errorCount += batch.length;
+          
+          // Try individual processing for failed batch
+          console.log(`[R2_PROCESS] Attempting individual processing for failed batch ${batchNumber}...`);
+          for (let j = 0; j < batch.length; j++) {
+            try {
+              console.log(`[R2_PROCESS] Individual processing chunk ${i + j + 1}/${chunks.length}`);
+              const embedding = await embedTextSingle(env, batch[j].content);
+              const vector = {
+                id: `${file.name}-chunk-${i + j}`,
+                values: embedding || new Array(1024).fill(0),
+                metadata: {
+                  title: file.name,
+                  source: sourceFilename,
+                  content: batch[j].content,
+                  chunk_index: i + j,
+                  total_chunks: chunks.length,
+                }
+              };
+              await vectorizeUpsert(env, [vector]);
+              successCount++;
+              errorCount--;
+              console.log(`[R2_PROCESS] Individual chunk ${i + j + 1} succeeded`);
+            } catch (individualError: any) {
+              console.error(`[R2_PROCESS] Individual chunk ${i + j} failed:`, individualError.message);
+            }
+          }
+        }
+      }
+
+      // Clean up R2 file after processing
+      try {
+        await env.DOCS_BUCKET.delete(sourceFilename);
+        console.log(`[R2_PROCESS] Cleaned up R2 file: ${sourceFilename}`);
+      } catch (cleanupError) {
+        console.warn(`[R2_PROCESS] Failed to cleanup R2 file:`, cleanupError);
+      }
+
+      console.log(`[R2_PROCESS] Processing completed!`);
+      console.log(`[R2_PROCESS] Final stats: ${successCount} successful, ${errorCount} failed out of ${chunks.length} total chunks`);
+
+      return jsonResponse({
+        ok: true,
+        message: `Ingestion completed. Processed ${successCount} chunks successfully, ${errorCount} failed.`,
+        stats: {
+          filename: file.name,
+          total_chunks: chunks.length,
+          success_count: successCount,
+          error_count: errorCount,
+          file_size: file.size
+        }
+      });
+
+    } catch (err: any) {
+      console.error("[R2_PROCESS] Process file error:", err);
+      return jsonResponse({ 
+        error: `Failed to process file: ${err?.message ?? err}`,
+        details: String(err)
+      }, { status: 500 });
+    }
+  };
+  
+  // Race between processing and timeout
+  try {
+    return await Promise.race([processingPromise(), timeoutPromise]) as Response;
+  } catch (err: any) {
+    console.error("[R2_PROCESS] Processing failed or timed out:", err.message);
+    return jsonResponse({ 
+      error: `Processing failed or timed out: ${err?.message ?? err}`,
+      timeout: err.message.includes('timeout')
+    }, { status: 500 });
+  }
+}
+
 async function handleIngest(request: Request, env: Env): Promise<Response> {
   if (!requireAuth(request, env.API_AUTH_TOKEN)) return unauthorized();
   const body = (await request.json()) as IngestRequestBody;
@@ -167,48 +425,267 @@ async function handleIngest(request: Request, env: Env): Promise<Response> {
 
   const { id, text, title, source } = body;
 
+  console.log(`[INGEST] Starting ingestion for document: ${id}`);
+  console.log(`[INGEST] Original text length: ${text.length} characters`);
+  
   // Clean text before chunking to prevent encoding issues
   const cleanedText = cleanText(text);
+  console.log(`[INGEST] Cleaned text length: ${cleanedText.length} characters`);
   
   // Chunk
   const chunks = chunkText(cleanedText);
+  console.log(`[INGEST] Generated ${chunks.length} chunks`);
+  console.log(`[INGEST] Chunk size stats: min=${Math.min(...chunks.map(c => c.content.length))}, max=${Math.max(...chunks.map(c => c.content.length))}, avg=${Math.round(chunks.reduce((sum, c) => sum + c.content.length, 0) / chunks.length)}`);
   try { console.log("INGEST", JSON.stringify({ id, title, source, chunks: chunks.length })); } catch {}
 
-  // Embed + upsert sequentially (safer on free tier)
+  // Embed + upsert in batches (memory management for large files)
+  const BATCH_SIZE = 25; // Process 25 chunks at a time to avoid memory issues
   const vectors: Array<{ id: string; values: number[]; metadata: Record<string, unknown> }> = [];
-  let index = 0;
-  for (const c of chunks) {
-    // Clean chunk content as well
-    const cleanedContent = cleanText(c.content);
-    const emb = await embedText(env, cleanedContent);
-    const vecId = `${id}::${index}`;
-    vectors.push({
-      id: vecId,
-      values: emb,
-      metadata: {
-        doc_id: id,
-        title,
-        source,
-        chunk_index: index,
-        offset: c.offset,
-        length: c.length,
-        content: cleanedContent,
-      },
-    });
-    index += 1;
+  
+  console.log(`[INGEST] Processing ${chunks.length} chunks in batches of ${BATCH_SIZE}...`);
+  console.log(`[INGEST] Using embedding model: ${env.MODEL_EMBEDDING}`);
+  
+  for (let batchStart = 0; batchStart < chunks.length; batchStart += BATCH_SIZE) {
+    const batchEnd = Math.min(batchStart + BATCH_SIZE, chunks.length);
+    const batchChunks = chunks.slice(batchStart, batchEnd);
+    
+    const batchNumber = Math.floor(batchStart / BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(chunks.length / BATCH_SIZE);
+    console.log(`[INGEST] Processing batch ${batchNumber}/${totalBatches} (chunks ${batchStart + 1}-${batchEnd}/${chunks.length})`);
+    
+    const batchVectors: Array<{ id: string; values: number[]; metadata: Record<string, unknown> }> = [];
+    
+    for (let i = 0; i < batchChunks.length; i++) {
+      const c = batchChunks[i];
+      const globalIndex = batchStart + i;
+      
+      console.log(`[INGEST] Processing chunk ${globalIndex + 1}/${chunks.length} (length: ${c.content.length})`);
+      
+      // Clean chunk content as well
+      const cleanedContent = cleanText(c.content);
+      const emb = await embedText(env, cleanedContent);
+      const vecId = `${id}::${globalIndex}`;
+      
+      console.log(`[INGEST] Chunk ${globalIndex + 1} embedded successfully (dim: ${emb.length})`);
+      
+      batchVectors.push({
+        id: vecId,
+        values: emb,
+        metadata: {
+          doc_id: id,
+          title,
+          source,
+          chunk_index: globalIndex,
+          offset: c.offset,
+          length: c.length,
+          content: cleanedContent,
+        },
+      });
+    }
+    
+    // Upsert this batch
+    console.log(`[INGEST] Upserting batch ${batchNumber} with ${batchVectors.length} vectors...`);
+    await vectorizeUpsert(env, batchVectors);
+    vectors.push(...batchVectors);
+    
+    console.log(`[INGEST] Batch ${batchNumber} completed: ${batchVectors.length} vectors upserted`);
   }
 
+  console.log(`[INGEST] Final upsert with all ${vectors.length} vectors...`);
   await vectorizeUpsert(env, vectors);
+  
+  console.log(`[INGEST] Ingestion completed successfully!`);
+  console.log(`[INGEST] Total chunks processed: ${chunks.length}`);
+  console.log(`[INGEST] Total vectors upserted: ${vectors.length}`);
+  if (vectors.length > 0) {
+    console.log(`[INGEST] Vector dimensions: ${vectors[0]?.values?.length ?? 'unknown'}`);
+  }
+  
   try { console.log("UPSERT", JSON.stringify({ id, points: vectors.length, dim: vectors[0]?.values?.length ?? 0 })); } catch {}
 
   // Store raw text in R2 (optional but useful)
   try {
+    console.log(`[INGEST] Storing raw text in R2: docs/${id}.txt`);
     await env.DOCS_BUCKET.put(`docs/${id}.txt`, text, { httpMetadata: { contentType: "text/plain;charset=utf-8" } });
-  } catch (err) {
+    console.log(`[INGEST] Raw text stored successfully in R2`);
+  } catch (err: any) {
+    console.log(`[INGEST] Failed to store raw text in R2:`, err.message);
     // non-fatal
   }
 
   return jsonResponse({ ok: true, id, chunks: chunks.length, upserted: vectors.length });
+}
+
+async function handlePublicIngest(request: Request, env: Env): Promise<Response> {
+  // Public ingestion endpoint for browser uploads (bypasses auth)
+  console.log("PUBLIC INGEST: Request received");
+  
+  try {
+    const body = (await request.json()) as IngestRequestBody;
+    if (!body?.id || !body?.text) {
+      console.log("PUBLIC INGEST: Missing required fields");
+      return jsonResponse({ error: "Expected { id, text }" }, { status: 400 });
+    }
+
+    const { id, text, title, source } = body;
+    console.log(`[PUBLIC_INGEST] Starting ingestion for ${id}, text length: ${text.length}`);
+    console.log(`[PUBLIC_INGEST] Document title: ${title || 'N/A'}, source: ${source || 'N/A'}`);
+
+    // Clean text before chunking to prevent encoding issues
+    const cleanedText = cleanText(text);
+    console.log(`[PUBLIC_INGEST] Cleaned text length: ${cleanedText.length} characters`);
+    
+    // Chunk
+    const chunks = chunkText(cleanedText);
+    console.log(`[PUBLIC_INGEST] Generated ${chunks.length} chunks`);
+    console.log(`[PUBLIC_INGEST] Chunk size stats: min=${Math.min(...chunks.map(c => c.content.length))}, max=${Math.max(...chunks.map(c => c.content.length))}, avg=${Math.round(chunks.reduce((sum, c) => sum + c.content.length, 0) / chunks.length)}`);
+
+    // Use larger batch size for faster processing  
+    const PROCESSING_BATCH_SIZE = 25; // Increase batch size to reduce API calls
+    const vectors: Array<{ id: string; values: number[]; metadata: Record<string, unknown> }> = [];
+    
+    console.log(`[PUBLIC_INGEST] Processing ${chunks.length} chunks using batch embedding...`);
+    console.log(`[PUBLIC_INGEST] Using embedding model: ${env.MODEL_EMBEDDING}`);
+    
+    for (let batchStart = 0; batchStart < chunks.length; batchStart += PROCESSING_BATCH_SIZE) {
+      const batchEnd = Math.min(batchStart + PROCESSING_BATCH_SIZE, chunks.length);
+      const batchChunks = chunks.slice(batchStart, batchEnd);
+      
+      console.log(`PUBLIC INGEST: Processing batch ${Math.floor(batchStart / PROCESSING_BATCH_SIZE) + 1}/${Math.ceil(chunks.length / PROCESSING_BATCH_SIZE)} (${batchStart + 1}-${batchEnd}/${chunks.length})`);
+      
+      try {
+        // Clean all chunk contents
+        const cleanedContents = batchChunks.map(c => cleanText(c.content));
+        
+        // Use batch embedding for efficiency and rate limiting
+        const embeddings = await embedTextBatch(env, cleanedContents);
+        
+        // Create vectors for this batch
+        const batchVectors: Array<{ id: string; values: number[]; metadata: Record<string, unknown> }> = [];
+        
+        for (let i = 0; i < batchChunks.length; i++) {
+          const c = batchChunks[i];
+          const globalIndex = batchStart + i;
+          const vecId = `${id}::${globalIndex}`;
+          
+          // Use the embedding from batch processing
+          const embedding = embeddings[i] || new Array(1024).fill(0); // Fallback to zero vector
+          
+          batchVectors.push({
+            id: vecId,
+            values: embedding,
+            metadata: {
+              doc_id: id,
+              title,
+              source,
+              chunk_index: globalIndex,
+              offset: c.offset,
+              length: c.length,
+              content: cleanedContents[i],
+            },
+          });
+        }
+        
+        // Upsert this batch
+        if (batchVectors.length > 0) {
+          await vectorizeUpsert(env, batchVectors);
+          vectors.push(...batchVectors);
+          console.log(`PUBLIC INGEST: Batch ${Math.floor(batchStart / PROCESSING_BATCH_SIZE) + 1} completed: ${batchVectors.length} vectors upserted`);
+        }
+        
+      } catch (batchError: any) {
+        console.log(`PUBLIC INGEST: Batch ${Math.floor(batchStart / PROCESSING_BATCH_SIZE) + 1} failed:`, batchError.message);
+        
+        // Fallback to individual processing with longer delays
+        console.log(`PUBLIC INGEST: Falling back to individual processing for this batch...`);
+        
+        const batchVectors: Array<{ id: string; values: number[]; metadata: Record<string, unknown> }> = [];
+        
+        for (let i = 0; i < batchChunks.length; i++) {
+          const c = batchChunks[i];
+          const globalIndex = batchStart + i;
+          
+          try {
+            const cleanedContent = cleanText(c.content);
+            console.log(`PUBLIC INGEST: Individual embedding for chunk ${globalIndex + 1}/${chunks.length}...`);
+            
+            const emb = await embedTextSingle(env, cleanedContent);
+            const vecId = `${id}::${globalIndex}`;
+            
+            batchVectors.push({
+              id: vecId,
+              values: emb,
+              metadata: {
+                doc_id: id,
+                title,
+                source,
+                chunk_index: globalIndex,
+                offset: c.offset,
+                length: c.length,
+                content: cleanedContent,
+              },
+            });
+            
+            console.log(`PUBLIC INGEST: Chunk ${globalIndex + 1} embedded individually`);
+            
+            // Rate limiting delay between individual requests (50 requests/second max)
+            await new Promise(resolve => setTimeout(resolve, 1200));
+            
+          } catch (individualError: any) {
+            console.log(`PUBLIC INGEST: Individual embedding failed for chunk ${globalIndex + 1}, using zero vector`);
+            
+            // Use zero vector as ultimate fallback
+            const vecId = `${id}::${globalIndex}`;
+            batchVectors.push({
+              id: vecId,
+              values: new Array(1024).fill(0),
+              metadata: {
+                doc_id: id,
+                title,
+                source,
+                chunk_index: globalIndex,
+                offset: c.offset,
+                length: c.length,
+                content: cleanText(c.content),
+              },
+            });
+          }
+        }
+        
+        // Upsert whatever we managed to process
+        if (batchVectors.length > 0) {
+          await vectorizeUpsert(env, batchVectors);
+          vectors.push(...batchVectors);
+          console.log(`PUBLIC INGEST: Individual fallback completed: ${batchVectors.length} vectors upserted`);
+        }
+      }
+    }
+
+  console.log(`PUBLIC INGEST: All batches completed. Total vectors: ${vectors.length}`);
+
+  // Store raw text in R2 (optional but useful)
+  try {
+    await env.DOCS_BUCKET.put(`docs/${id}.txt`, cleanedText, { httpMetadata: { contentType: "text/plain;charset=utf-8" } });
+    console.log(`PUBLIC INGEST: Stored raw text in R2`);
+  } catch (err) {
+    console.log(`PUBLIC INGEST: Failed to store in R2:`, err);
+    // non-fatal
+  }
+
+    console.log(`PUBLIC INGEST: Ingestion completed successfully`);
+    return jsonResponse({ ok: true, id, chunks: chunks.length, upserted: vectors.length });
+    
+  } catch (error: any) {
+    console.log(`PUBLIC INGEST: Fatal error during ingestion:`, error.message);
+    console.log(`PUBLIC INGEST: Error details:`, error);
+    
+    // Return a proper error response instead of throwing
+    return jsonResponse({ 
+      error: "Ingestion failed", 
+      details: error.message,
+      suggestion: "The AI model may be temporarily unavailable. Please try again in a few minutes."
+    }, { status: 500 });
+  }
 }
 
 function newConversationId(): string {
@@ -259,15 +736,8 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   const ms = Date.now() - t0;
   try { console.log("CREWAI_CHAT_ANSWER", JSON.stringify({ conversationId, ms, chars: chatResponse.answer.length, citations: chatResponse.citations.length })); } catch {}
 
-  // Debug: Check what's in the citations from crew agents
-  console.log("CREW CITATIONS DEBUG:", JSON.stringify(chatResponse.citations.slice(0, 3), null, 2));
-
-  // Clean the answer text before persisting and returning
-  const cleanedAnswer = cleanText(chatResponse.answer);
-  chatResponse.answer = cleanedAnswer;
-
   // Persist assistant message and citations
-  await appendMessage(env, conversationId, { role: "assistant", content: cleanedAnswer });
+  await appendMessage(env, conversationId, { role: "assistant", content: chatResponse.answer });
   try {
     const convAfter = await getConversation(env, conversationId);
     if (convAfter) {
@@ -397,25 +867,16 @@ async function handleQuery(request: Request, env: Env): Promise<Response> {
     } catch {}
   }
 
-  const synthesisResult = await synthesize(env, query, contextBlocks);
+  const answer = await synthesize(env, query, contextBlocks);
   const ms = Date.now() - t0;
-  try { console.log("RAG_ANSWER", JSON.stringify({ ms, chars: synthesisResult.answer.length, citations: contextBlocks.length, reasoning: !!synthesisResult.reasoning_summary })); } catch {}
+  try { console.log("RAG_ANSWER", JSON.stringify({ ms, chars: answer.answer?.length || 0, citations: contextBlocks.length })); } catch {}
 
   return jsonResponse({
     ok: true,
     query,
     topScore,
-    citations: contextBlocks.map((c, i) => {
-      console.log(`Citation ${i + 1} structure:`, JSON.stringify({ id: c.id, hasContent: !!c.content, contentLength: c.content?.length, title: c.title, source: c.source }, null, 2));
-      return { 
-        ref: `#${i + 1}`, 
-        id: c.id, 
-        title: c.title ? cleanText(c.title) : c.id, 
-        source: c.source ? cleanText(c.source) : 'Unknown',
-        content: c.content ? cleanText(c.content) : 'Content not available' // Clean content for modal display
-      }
-    }),
-    answer: cleanText(synthesisResult.answer),
+    citations: contextBlocks.map((c, i) => ({ ref: `#${i + 1}`, id: c.id, title: c.title, source: c.source })),
+    answer,
   });
 }
 
@@ -506,7 +967,10 @@ export default {
       }
 
       if (url.pathname === "/health") return handleHealth();
+      if (url.pathname === "/upload-r2" && request.method === "POST") return handleR2Upload(request, env);
+      if (url.pathname === "/process-r2" && request.method === "POST") return handleR2Process(request, env);
       if (url.pathname === "/ingest" && request.method === "POST") return handleIngest(request, env);
+      if (url.pathname === "/ingest-public" && request.method === "POST") return handlePublicIngest(request, env);
       if (url.pathname === "/chat" && request.method === "POST") return handleChat(request, env);
       if (url.pathname === "/query" && request.method === "POST") return handleQuery(request, env);
       if (url.pathname === "/bluetooth/tool" && request.method === "POST") {
@@ -527,6 +991,60 @@ export default {
         return handleMemoryClear(request, env, id);
       }
       if (url.pathname === "/debug/diag" && request.method === "POST") return handleDiag(request, env);
+      
+      // Debug endpoints for BGE-Large response format testing
+      if (url.pathname === "/debug/single-embedding" && request.method === "POST") {
+        const { text } = await request.json() as { text: string };
+        try {
+          const res = await env.AI.run(env.MODEL_EMBEDDING, { text });
+          return jsonResponse({
+            success: true,
+            raw_response: res,
+            response_type: typeof res,
+            response_keys: Object.keys(res || {}),
+            response_structure: JSON.stringify(res, null, 2)
+          });
+        } catch (error: any) {
+          return jsonResponse({ error: error.message }, { status: 500 });
+        }
+      }
+      
+      if (url.pathname === "/debug/batch-embedding" && request.method === "POST") {
+        const { texts } = await request.json() as { texts: string[] };
+        try {
+          const res = await env.AI.run(env.MODEL_EMBEDDING, { text: texts });
+          return jsonResponse({
+            success: true,
+            input_count: texts.length,
+            raw_response: res,
+            response_type: typeof res,
+            response_keys: Object.keys(res || {}),
+            response_structure: JSON.stringify(res, null, 2)
+          });
+        } catch (error: any) {
+          return jsonResponse({ error: error.message }, { status: 500 });
+        }
+      }
+      
+      // Document management endpoints
+      if (url.pathname === "/debug/list-documents" && request.method === "GET") {
+        return handleListDocuments(request, env);
+      }
+      
+      if (url.pathname === "/debug/document-stats" && request.method === "GET") {
+        return handleDocumentStats(request, env);
+      }
+      
+      if (url.pathname === "/admin/delete-document" && request.method === "DELETE") {
+        if (!requireAuth(request, env.API_AUTH_TOKEN)) return unauthorized();
+        return handleDeleteDocument(request, env);
+      }
+      
+      if (url.pathname === "/admin/cleanup-all" && request.method === "DELETE") {
+        if (!requireAuth(request, env.API_AUTH_TOKEN)) return unauthorized();
+        return handleCleanupAll(request, env);
+      }
+      
       return jsonResponse({ error: "Not found" }, { status: 404 });
     } catch (err: any) {
       return jsonResponse({ error: String(err?.message ?? err) }, { status: 500 });

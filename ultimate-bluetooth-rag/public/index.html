@@ -20,41 +20,80 @@
   </header>
 
   <div class="container">
-    <div class="app-grid">
-      <!-- Sidebar: connection + conversations + ingest -->
-      <aside class="sidebar panel">
-        <h2 class="panel-title">Session</h2>
-        <div class="row">
-          <label>Endpoint</label>
-          <input id="endpoint" type="text" value="" placeholder="Leave blank for same origin" />
+    <!-- Sidebar Toggle Button -->
+    <button id="sidebarToggle" class="sidebar-toggle">☰</button>
+    
+    <div class="app-layout">
+      <!-- Collapsible Sidebar -->
+      <aside id="sidebar" class="sidebar panel">
+        <div class="sidebar-header">
+          <h2 class="panel-title">Controls</h2>
+          <button id="sidebarClose" class="sidebar-close">&times;</button>
         </div>
-        <div class="row">
-          <label>Auth Token</label>
-          <input id="token" type="password" placeholder="Bearer token (if set)" />
-        </div>
-        <div class="divider"></div>
-        <h2 class="panel-title">Conversation</h2>
-        <div class="row combo">
-          <label>Active</label>
-          <select id="conversations"></select>
-        </div>
-        <div class="row btn-group">
-          <button id="newConversation" class="btn ghost">New</button>
-          <button id="exportConversation" class="btn ghost">Export</button>
-          <button id="clearConversation" class="btn danger">Clear</button>
-        </div>
+        
+        <div class="sidebar-content">
+          <h3 class="panel-title">Session</h3>
+          <div class="row">
+            <label>Endpoint</label>
+            <input id="endpoint" type="text" value="" placeholder="Leave blank for same origin" />
+          </div>
+          <div class="row">
+            <label>Auth Token</label>
+            <input id="token" type="password" placeholder="Bearer token (if set)" />
+          </div>
+          
+          <div class="divider"></div>
+          <h3 class="panel-title">Conversation</h3>
+          <div class="row combo">
+            <label>Active</label>
+            <select id="conversations"></select>
+          </div>
+          <div class="row btn-group">
+            <button id="newConversation" class="btn ghost">New</button>
+            <button id="exportConversation" class="btn ghost">Export</button>
+            <button id="clearConversation" class="btn danger">Clear</button>
+          </div>
 
-        <div class="divider"></div>
-        <h2 class="panel-title">Ingest (.txt/.md/.tex/.pdf/.docx)</h2>
-        <div class="row">
-          <input id="ingestFiles" type="file" multiple accept=".txt,.md,.tex,.pdf,.docx" />
-          <button id="ingestBtn" class="btn">Ingest</button>
+          <div class="divider"></div>
+          <h3 class="panel-title">Ingest (.txt/.md/.tex/.pdf/.docx)</h3>
+          <div class="row">
+            <input id="ingestFiles" type="file" multiple accept=".txt,.md,.tex,.pdf/.docx" />
+            <button id="ingestBtn" class="btn">Ingest</button>
+          </div>
+          <pre id="log" class="log-panel"></pre>
+
+          <div class="divider"></div>
+          <h3 class="panel-title">Document Management</h3>
+          <div class="row btn-group">
+            <button id="listDocsBtn" class="btn ghost">List Docs</button>
+            <button id="refreshDocsBtn" class="btn ghost">Refresh</button>
+          </div>
+          
+          <div id="documentsList" class="documents-list" style="display: none;">
+            <div class="row">
+              <label>Available Documents:</label>
+              <select id="documentsSelect" size="4" style="min-height: 80px; width: 100%;">
+                <!-- Documents will be loaded here -->
+              </select>
+            </div>
+            <div class="row btn-group">
+              <button id="viewDocBtn" class="btn ghost">View Stats</button>
+              <button id="deleteDocBtn" class="btn danger">Delete Selected</button>
+            </div>
+            <div class="row">
+              <button id="cleanupAllBtn" class="btn danger" style="width: 100%;">⚠️ Delete ALL Documents</button>
+            </div>
+          </div>
+          
+          <div id="docStats" class="doc-stats" style="display: none;">
+            <h4>Document Statistics</h4>
+            <div id="docStatsContent"></div>
+          </div>
         </div>
-        <pre id="log" class="log-panel"></pre>
       </aside>
 
-      <!-- Main chat area -->
-      <main class="chat-panel panel">
+      <!-- Main chat area - full width -->
+      <main class="chat-container">
         <div class="chat-header">
           <h2>Chat</h2>
         </div>

@@ -5,7 +5,7 @@ An end-to-end Retrieval-Augmented Generation (RAG) agent optimized for Bluetooth
 ## Architecture & Approach
 
 - Compute: Cloudflare Workers
-- Embeddings: Workers AI `@cf/baai/bge-large-en-v1.5` (1024‑dim)
+- Embeddings: Workers AI `@cf/baai/bge-large-en-v1.5` (1024‑dim, optimized for large documents)
 - Retrieval: Cloudflare Vectorize (cosine ANN)
 - Re-ranking: Workers AI `@cf/baai/bge-reranker-base`
 - Storage: Cloudflare R2 (stores original text)

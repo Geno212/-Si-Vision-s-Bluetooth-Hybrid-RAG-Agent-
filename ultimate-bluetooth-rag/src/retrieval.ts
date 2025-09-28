@@ -36,42 +36,281 @@ async function cfAiEmbedViaRest(env: Env, text: string): Promise<number[] | null
   return null;
 }
 
-export async function embedText(env: Env, text: string, useQueryPrefix: boolean = false): Promise<number[]> {
-  try {
-    // BGE-M3 supports query prefix for enhanced query-context matching
-    const inputText = useQueryPrefix ? `query: ${text}` : text;
+// BGE-Large Batch Embedding Function with Enhanced Logging and Rate Limiting
+export async function embedTextBatch(env: Env, texts: string[], useQueryPrefix: boolean = false): Promise<number[][]> {
+  const MAX_BATCH_SIZE = 50; // Increase batch size for faster processing
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY = 5000; // 5 seconds for batch operations
+  
+  console.log(`[EMBEDDING] Starting batch embedding for ${texts.length} texts, max batch size: ${MAX_BATCH_SIZE}`);
+  
+  const results: number[][] = [];
+  
+  // Process in smaller batches to respect rate limits
+  for (let i = 0; i < texts.length; i += MAX_BATCH_SIZE) {
+    const batch = texts.slice(i, i + MAX_BATCH_SIZE);
+    const batchInputs = batch.map(text => useQueryPrefix ? `query: ${text}` : text);
     
-    const res: any = await env.AI.run(env.MODEL_EMBEDDING, { text: inputText });
-    // Normalize common Workers AI response shapes for BGE-M3
-    let vec: number[] | null = null;
-    if (Array.isArray(res?.data) && typeof res.data[0] === "number") vec = res.data as number[];
-    else if (Array.isArray(res?.data) && Array.isArray(res.data[0])) vec = res.data[0] as number[];
-    else if (Array.isArray(res?.data) && res.data[0]?.embedding) vec = res.data[0].embedding as number[];
-    else if (Array.isArray(res?.embeddings)) vec = res.embeddings[0] as number[];
-    else if (Array.isArray(res?.output) && Array.isArray(res.output[0])) vec = res.output[0] as number[];
-    else if (Array.isArray(res?.result?.data) && typeof res.result.data[0] === "number") vec = res.result.data as number[];
-    else if (Array.isArray(res?.result?.data) && Array.isArray(res.result.data[0])) vec = res.result.data[0] as number[];
-
-    // Validate vector: must be non-empty numeric array
-    if (Array.isArray(vec) && vec.length > 0 && vec.every((n) => typeof n === "number" && Number.isFinite(n))) {
-      return vec;
+    const batchNumber = Math.floor(i / MAX_BATCH_SIZE) + 1;
+    const totalBatches = Math.ceil(texts.length / MAX_BATCH_SIZE);
+    console.log(`[EMBEDDING] Processing batch ${batchNumber}/${totalBatches} (texts ${i + 1}-${Math.min(i + MAX_BATCH_SIZE, texts.length)}/${texts.length})`);
+    console.log(`[EMBEDDING] Batch text lengths: [${batch.map(t => t.length).join(', ')}]`);
+    
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        console.log(`[EMBEDDING] Batch ${batchNumber} attempt ${attempt}/${MAX_RETRIES} - calling ${env.MODEL_EMBEDDING}`);
+        const startTime = Date.now();
+        
+        const res: any = await env.AI.run(env.MODEL_EMBEDDING, { text: batchInputs });
+        
+        const processingTime = Date.now() - startTime;
+        console.log(`[EMBEDDING] API call completed in ${processingTime}ms`);
+        
+        // Handle batch response - BGE-Large model debugging
+        let batchVectors: number[][] = [];
+        
+        console.log(`[EMBEDDING] Raw response type:`, typeof res);
+        console.log(`[EMBEDDING] Raw response keys:`, Object.keys(res || {}));
+        // Don't log full response anymore due to 256KB limit - just log structure
+        if (res?.data) {
+          console.log(`[EMBEDDING] Data type:`, typeof res.data, `Length:`, Array.isArray(res.data) ? res.data.length : 'not array');
+          if (Array.isArray(res.data) && res.data.length > 0) {
+            console.log(`[EMBEDDING] First element type:`, typeof res.data[0], `Length:`, Array.isArray(res.data[0]) ? res.data[0].length : 'not array');
+          }
+        }
+        console.log(`[EMBEDDING] Shape:`, res?.shape);
+        console.log(`[EMBEDDING] Pooling:`, res?.pooling);
+        
+        // BGE-Large specific format: { data: [...], shape: [...], pooling: [...] }
+        
+        // Pattern 1: BGE-Large format with data field
+        if (Array.isArray(res?.data)) {
+          if (Array.isArray(res.data[0]) && typeof res.data[0][0] === "number") {
+            // 2D array: [[0.1, 0.2, ...], [0.4, 0.5, ...]]
+            batchVectors = res.data as number[][];
+            console.log(`[EMBEDDING] ✅ Using BGE-Large res.data 2D array format, found ${batchVectors.length} vectors`);
+            console.log(`[EMBEDDING] Shape info:`, res.shape);
+            console.log(`[EMBEDDING] Pooling info:`, res.pooling);
+          } else if (Array.isArray(res.data[0]) && Array.isArray(res.data[0][0])) {
+            // Nested 3D: [[[0.1, 0.2, ...]]]
+            batchVectors = res.data[0] as number[][];
+            console.log(`[EMBEDDING] ✅ Using BGE-Large res.data nested format, found ${batchVectors.length} vectors`);
+          } else if (typeof res.data[0] === "number") {
+            // Single flat array for one text: [0.1, 0.2, 0.3, ...]
+            batchVectors = [res.data as number[]];
+            console.log(`[EMBEDDING] ✅ Using BGE-Large res.data single vector format, found ${batchVectors.length} vectors`);
+          } else {
+            // Try to reshape based on shape information if available
+            if (res.shape && Array.isArray(res.shape) && res.shape.length === 2) {
+              const [numVectors, vectorDim] = res.shape;
+              console.log(`[EMBEDDING] Attempting reshape using shape: [${numVectors}, ${vectorDim}]`);
+              
+              // Reshape flat data array
+              const flatData = res.data;
+              if (Array.isArray(flatData) && flatData.length === numVectors * vectorDim) {
+                batchVectors = [];
+                for (let i = 0; i < numVectors; i++) {
+                  const start = i * vectorDim;
+                  const end = start + vectorDim;
+                  batchVectors.push(flatData.slice(start, end));
+                }
+                console.log(`[EMBEDDING] ✅ Using BGE-Large reshape format, found ${batchVectors.length} vectors`);
+              }
+            }
+          }
+        }
+        
+        // Pattern 2: Result wrapper
+        else if (Array.isArray(res?.result?.data)) {
+          if (Array.isArray(res.result.data[0]) && typeof res.result.data[0][0] === "number") {
+            batchVectors = res.result.data as number[][];
+            console.log(`[EMBEDDING] ✅ Using res.result.data format, found ${batchVectors.length} vectors`);
+          }
+        }
+        
+        // Pattern 3: Response wrapper
+        else if (Array.isArray(res?.response)) {
+          if (Array.isArray(res.response[0]) && typeof res.response[0][0] === "number") {
+            batchVectors = res.response as number[][];
+            console.log(`[EMBEDDING] ✅ Using res.response format, found ${batchVectors.length} vectors`);
+          }
+        }
+        
+        // Pattern 4: Embeddings field
+        else if (Array.isArray(res?.embeddings)) {
+          if (Array.isArray(res.embeddings[0]) && typeof res.embeddings[0][0] === "number") {
+            batchVectors = res.embeddings as number[][];
+            console.log(`[EMBEDDING] ✅ Using res.embeddings format, found ${batchVectors.length} vectors`);
+          }
+        }
+        
+        // Pattern 5: Direct array response
+        else if (Array.isArray(res)) {
+          if (Array.isArray(res[0]) && typeof res[0][0] === "number") {
+            batchVectors = res as number[][];
+            console.log(`[EMBEDDING] ✅ Using direct array format, found ${batchVectors.length} vectors`);
+          }
+        }
+        
+        // Pattern 6: Single vector in data
+        else if (res?.data && !Array.isArray(res.data) && typeof res.data[0] === "number") {
+          batchVectors = [res.data];
+          console.log(`[EMBEDDING] ✅ Using single data vector format, found ${batchVectors.length} vectors`);
+        }
+        
+        console.log(`[EMBEDDING] Extraction complete. Found ${batchVectors.length} vectors total`);
+        
+        // Validate all vectors
+        const validVectors = batchVectors.filter(vec => 
+          Array.isArray(vec) && 
+          vec.length > 0 && 
+          vec.every(n => typeof n === "number" && Number.isFinite(n))
+        );
+        
+        console.log(`[EMBEDDING] Validated ${validVectors.length}/${batchVectors.length} vectors from batch`);
+        if (validVectors.length > 0) {
+          console.log(`[EMBEDDING] Vector dimensions: ${validVectors[0].length}`);
+        }
+        
+        if (validVectors.length === batch.length) {
+          console.log(`[EMBEDDING] Batch ${batchNumber} successful on attempt ${attempt} (${validVectors.length} vectors in ${processingTime}ms)`);
+          results.push(...validVectors);
+          break;
+        }
+        
+        throw new Error(`Invalid batch response: got ${validVectors.length} valid vectors for ${batch.length} texts`);
+        
+      } catch (e: any) {
+        console.log(`[EMBEDDING] Batch ${batchNumber} attempt ${attempt} failed:`, e.message);
+        console.log(`[EMBEDDING] Error details:`, e.stack || e);
+        
+        if (attempt === MAX_RETRIES) {
+          console.log(`[EMBEDDING] Batch ${batchNumber} failed after ${MAX_RETRIES} attempts, falling back to individual embeddings`);
+          
+          // Fallback to individual embeddings with longer delays
+          for (let j = 0; j < batch.length; j++) {
+            const text = batch[j];
+            try {
+              console.log(`[EMBEDDING] Individual processing ${j + 1}/${batch.length} (text length: ${text.length})`);
+              const vec = await embedTextSingle(env, text, useQueryPrefix);
+              results.push(vec);
+              console.log(`[EMBEDDING] Individual embedding ${j + 1} successful (dim: ${vec.length})`);
+              // Much longer delay to avoid rate limiting
+              await new Promise(resolve => setTimeout(resolve, 5000)); // 5 seconds between individual requests
+            } catch (individualError: any) {
+              console.log(`[EMBEDDING] Individual embedding ${j + 1} failed:`, individualError.message);
+              // Determine vector dimension from previous successful embeddings or default
+              const vectorDim = results.length > 0 ? results[0].length : 1024;
+              const fallbackVector = new Array(vectorDim).fill(0);
+              results.push(fallbackVector);
+              console.log(`[EMBEDDING] Using zero vector fallback (dim: ${vectorDim})`);
+            }
+          }
+          break;
+        }
+        
+        // Exponential backoff for batch retries
+        const delay = RETRY_DELAY * Math.pow(2, attempt - 1);
+        console.log(`Waiting ${delay}ms before batch retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
-
-    // If shape/validation unknown, try REST fallback
-    const viaRest = await cfAiEmbedViaRest(env, inputText);
-    if (Array.isArray(viaRest) && viaRest.length > 0 && viaRest.every((n) => typeof n === "number" && Number.isFinite(n))) {
-      return viaRest;
+    
+    // Rate limiting delay between batches
+    if (i + MAX_BATCH_SIZE < texts.length) {
+      console.log(`[EMBEDDING] Pausing 3 seconds before next batch to respect rate limits...`);
+      await new Promise(resolve => setTimeout(resolve, 3000));
     }
-    throw new Error("Embedding returned empty or invalid vector");
-  } catch (e) {
-    // If AI binding fails (e.g., auth), try REST fallback
-    const inputText = useQueryPrefix ? `query: ${text}` : text;
-    const viaRest = await cfAiEmbedViaRest(env, inputText);
-    if (Array.isArray(viaRest) && viaRest.length > 0 && viaRest.every((n) => typeof n === "number" && Number.isFinite(n))) {
-      return viaRest;
-    }
-    throw e;
   }
+  
+  console.log(`[EMBEDDING] Batch embedding completed: ${results.length}/${texts.length} embeddings generated`);
+  if (results.length > 0) {
+    console.log(`[EMBEDDING] Final vector dimensions: ${results[0].length}`);
+  }
+  return results;
+}
+
+// Single embedding function (fallback) with enhanced logging
+export async function embedTextSingle(env: Env, text: string, useQueryPrefix: boolean = false): Promise<number[]> {
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY = 2000; // 2 seconds
+  
+  console.log(`[EMBEDDING_SINGLE] Processing text (length: ${text.length})`);
+  
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      // BGE models support query prefix for enhanced query-context matching
+      const inputText = useQueryPrefix ? `query: ${text}` : text;
+      
+      console.log(`[EMBEDDING_SINGLE] Attempt ${attempt}/${MAX_RETRIES} - calling ${env.MODEL_EMBEDDING}`);
+      const startTime = Date.now();
+      
+      const res: any = await env.AI.run(env.MODEL_EMBEDDING, { text: inputText });
+      
+      const processingTime = Date.now() - startTime;
+      console.log(`[EMBEDDING_SINGLE] API call completed in ${processingTime}ms`);
+      
+      // Normalize common Workers AI response shapes for BGE models
+      let vec: number[] | null = null;
+      if (Array.isArray(res?.data) && typeof res.data[0] === "number") vec = res.data as number[];
+      else if (Array.isArray(res?.data) && Array.isArray(res.data[0])) vec = res.data[0] as number[];
+      else if (Array.isArray(res?.data) && res.data[0]?.embedding) vec = res.data[0].embedding as number[];
+      else if (Array.isArray(res?.embeddings)) vec = res.embeddings[0] as number[];
+      else if (Array.isArray(res?.output) && Array.isArray(res.output[0])) vec = res.output[0] as number[];
+      else if (Array.isArray(res?.result?.data) && typeof res.result.data[0] === "number") vec = res.result.data as number[];
+      else if (Array.isArray(res?.result?.data) && Array.isArray(res.result.data[0])) vec = res.result.data[0] as number[];
+
+      // Validate vector: must be non-empty numeric array
+      if (Array.isArray(vec) && vec.length > 0 && vec.every((n) => typeof n === "number" && Number.isFinite(n))) {
+        console.log(`[EMBEDDING_SINGLE] Success on attempt ${attempt} (dim: ${vec.length}, time: ${processingTime}ms)`);
+        return vec;
+      }
+      
+      console.log(`[EMBEDDING_SINGLE] Invalid vector received on attempt ${attempt}`);
+      console.log(`[EMBEDDING_SINGLE] Vector info: Array=${Array.isArray(vec)}, Length=${vec?.length}, AllNumbers=${Array.isArray(vec) && vec.every((n: any) => typeof n === "number" && Number.isFinite(n))}`);
+    
+
+      // If shape/validation unknown, try REST fallback
+      const viaRest = await cfAiEmbedViaRest(env, inputText);
+      if (Array.isArray(viaRest) && viaRest.length > 0 && viaRest.every((n) => typeof n === "number" && Number.isFinite(n))) {
+        return viaRest;
+      }
+      
+      throw new Error("Embedding returned empty or invalid vector");
+      
+    } catch (e: any) {
+      console.log(`[EMBEDDING_SINGLE] Attempt ${attempt} failed:`, e.message);
+      
+      if (attempt === MAX_RETRIES) {
+        try {
+          console.log(`[EMBEDDING_SINGLE] Trying REST API fallback...`);
+          const inputText = useQueryPrefix ? `query: ${text}` : text;
+          const viaRest = await cfAiEmbedViaRest(env, inputText);
+          if (Array.isArray(viaRest) && viaRest.length > 0 && viaRest.every((n) => typeof n === "number" && Number.isFinite(n))) {
+            console.log(`[EMBEDDING_SINGLE] REST fallback successful (dim: ${viaRest.length})`);
+            return viaRest;
+          }
+        } catch (restError: any) {
+          console.log(`[EMBEDDING_SINGLE] REST fallback failed:`, restError.message);
+        }
+        // Final fallback: return zero vector
+        console.log(`[EMBEDDING_SINGLE] All embedding methods failed, returning zero vector (1024 dim)`);
+        return new Array(1024).fill(0);
+      }
+      
+      // Wait before retrying (exponential backoff)
+      const delay = RETRY_DELAY * Math.pow(2, attempt - 1);
+      console.log(`[EMBEDDING_SINGLE] Waiting ${delay}ms before retry...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  return new Array(1024).fill(0); // Should never reach here
+}
+
+// Legacy function for backward compatibility
+export async function embedText(env: Env, text: string, useQueryPrefix: boolean = false): Promise<number[]> {
+  return embedTextSingle(env, text, useQueryPrefix);
 }
 
 // Enhanced BGE-M3 query-context similarity scoring

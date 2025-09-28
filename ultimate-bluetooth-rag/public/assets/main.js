@@ -94,6 +94,8 @@ function appendMessage(role, text, streaming=false) {
 
 // Highlight uncited/malformed steps, clickable citations, and inline validation notes
 function renderAssistantAnswer(container, answerText) {
+  console.log('renderAssistantAnswer called with:', answerText);
+  
   // Split out [Validation Notes] if present
   let [main, ...rest] = answerText.split(/\n\n\[Validation Notes\]\n/);
   let validationNotes = rest.length ? rest.join('\n\n[Validation Notes]\n').split(/\n- /).filter(Boolean) : [];
@@ -118,13 +120,18 @@ function renderAssistantAnswer(container, answerText) {
         }
       }
     }
-    // Render clickable citations with type - handle both bracket formats
+    // First, render clickable citations with type - handle both bracket formats
     let rendered = line.replace(/[\[\【](#\d+|W\d+)[\]\】]/g, (m, ref) => {
       let type = ref.startsWith('#') ? 'ingested' : 'web';
       let label = type === 'ingested' ? 'Ingested' : 'Web';
       console.log('Creating citation link:', { match: m, ref: ref, type: type, label: label });
       return `<span class=\"citation-link\" data-citation=\"${ref}\" data-type=\"${type}\" title=\"${label} citation\" style=\"color: #0ea5e9; cursor: pointer; text-decoration: underline dotted;\">${m}<span class=\"citation-type\">[${label}]</span></span>`;
     });
+    
+    // Then apply markdown-style formatting for better readability
+    console.log('Before formatting:', rendered);
+    rendered = applyMarkdownFormatting(rendered);
+    console.log('After formatting:', rendered);
     stepDiv.innerHTML = rendered;
     container.appendChild(stepDiv);
   });
@@ -155,6 +162,148 @@ function renderAssistantAnswer(container, answerText) {
   }
 }
 
+// Apply markdown-style formatting to text for better visual presentation
+function applyMarkdownFormatting(text) {
+  console.log('applyMarkdownFormatting input:', text);
+  
+  // Skip table parsing for now - let tables display as plain text with better formatting
+  
+  const result = text
+    // Bold text: **text** -> <strong>text</strong>
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong style="color: var(--accent); font-weight: 600;">$1</strong>')
+    // Italic text: *text* -> <em>text</em> (but avoid interfering with bold)
+    .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em style="color: var(--accent-2); font-style: italic;">$1</em>')
+    // Code inline: `code` -> <code>code</code>
+    .replace(/`([^`\n]+)`/g, '<code style="background: rgba(14, 165, 233, 0.1); color: var(--accent-2); padding: 2px 4px; border-radius: 3px; font-family: monospace; border: 1px solid rgba(14, 165, 233, 0.2);">$1</code>')
+    // Headers: ### Text -> <h3>Text</h3>
+    .replace(/^###\s+(.+)$/gm, '<h3 style="color: var(--accent); font-size: 1.1em; font-weight: bold; margin: 0.8em 0 0.4em 0;">$1</h3>')
+    .replace(/^##\s+(.+)$/gm, '<h2 style="color: var(--accent); font-size: 1.2em; font-weight: bold; margin: 0.8em 0 0.4em 0;">$1</h2>')
+    .replace(/^#\s+(.+)$/gm, '<h1 style="color: var(--accent); font-size: 1.3em; font-weight: bold; margin: 0.8em 0 0.4em 0;">$1</h1>')
+    // Numbered lists: 1. Item -> proper list
+    .replace(/^\d+\.\s+(.+)$/gm, '<div style="margin: 0.3em 0; padding-left: 1.2em;">• $1</div>')
+    // Blockquotes: > Text -> styled blockquote
+    .replace(/^>\s+(.+)$/gm, '<blockquote style="border-left: 3px solid var(--accent); padding-left: 1em; margin: 0.5em 0; font-style: italic; color: var(--accent-2);">$1</blockquote>')
+    // Horizontal rules: --- -> <hr>
+    .replace(/^---+$/gm, '<hr style="border: none; border-top: 1px solid rgba(255,255,255,0.2); margin: 1em 0;">')
+    // Style pipe characters for better table readability
+    .replace(/\|/g, '<span style="color: var(--accent); margin: 0 4px;">|</span>')
+    // Line breaks for better spacing (preserve double breaks for paragraphs)
+    .replace(/\n\n/g, '<br><br>')
+    .replace(/\n/g, '<br>');
+  
+  console.log('applyMarkdownFormatting output:', result);
+  return result;
+}
+
+// Simple table parser that preserves content
+function simpleTableParser(text) {
+  // Convert simple table rows to basic HTML
+  return text.replace(/^\|(.+)\|$/gm, (match, content) => {
+    // Skip separator rows
+    if (content.includes('---')) return '';
+    
+    const cells = content.split('|').map(cell => cell.trim());
+    const cellHtml = cells.map(cell => `<td style="padding: 8px; border: 1px solid rgba(255,255,255,0.2);">${cell}</td>`).join('');
+    return `<tr style="background: rgba(255,255,255,0.05);">${cellHtml}</tr>`;
+  });
+}
+
+// Enhanced table parser for complex markdown tables
+function parseMarkdownTables(text) {
+  console.log('parseMarkdownTables input:', text.substring(0, 300) + '...');
+  
+  const lines = text.split('\n');
+  let result = [];
+  let inTable = false;
+  let tableRows = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmedLine = line.trim();
+    
+    // More robust table detection - must have at least 2 pipes and not be empty
+    const isPipeRow = trimmedLine.includes('|') && trimmedLine.split('|').length >= 3 && trimmedLine.length > 2;
+    const isSeparatorRow = trimmedLine.match(/^\|[\s\-|:]+\|$/);
+    
+    if (isPipeRow || isSeparatorRow) {
+      if (!inTable) {
+        inTable = true;
+        tableRows = [];
+        console.log('Starting table at line:', i, trimmedLine);
+      }
+      tableRows.push(trimmedLine);
+    } else if (inTable) {
+      // End of table, process accumulated rows
+      console.log('Ending table, rows collected:', tableRows.length);
+      if (tableRows.length > 0) {
+        const tableHtml = renderMarkdownTable(tableRows);
+        result.push(tableHtml);
+        tableRows = [];
+      }
+      inTable = false;
+      result.push(line);
+    } else {
+      result.push(line);
+    }
+  }
+  
+  // Handle table at end of text
+  if (inTable && tableRows.length > 0) {
+    console.log('Ending table at end, rows collected:', tableRows.length);
+    result.push(renderMarkdownTable(tableRows));
+  }
+  
+  console.log('parseMarkdownTables output:', result.join('\n').substring(0, 300) + '...');
+  return result.join('\n');
+}
+
+// Render a complete markdown table to HTML
+function renderMarkdownTable(rows) {
+  console.log('renderMarkdownTable called with rows:', rows);
+  if (rows.length === 0) return '';
+  
+  // Filter out separator rows and empty rows
+  const dataRows = rows.filter(row => {
+    const trimmed = row.trim();
+    return trimmed.length > 0 && !trimmed.match(/^\|[\s\-|:]+\|$/);
+  });
+  
+  console.log('Filtered data rows:', dataRows);
+  
+  if (dataRows.length === 0) return '';
+  
+  let html = '<table style="border-collapse: collapse; margin: 1em 0; width: 100%; background: rgba(255, 255, 255, 0.05); border-radius: 4px;">';
+  
+  dataRows.forEach((row, index) => {
+    const cells = row.split('|').map(cell => cell.trim()).filter(cell => cell !== '');
+    console.log(`Row ${index} cells:`, cells);
+    
+    if (cells.length === 0) return;
+    
+    const isHeader = index === 0;
+    const cellTag = isHeader ? 'th' : 'td';
+    const cellStyle = isHeader 
+      ? 'padding: 8px 12px; border: 1px solid rgba(14, 165, 233, 0.3); background: rgba(14, 165, 233, 0.1); font-weight: bold; color: var(--accent);'
+      : 'padding: 6px 12px; border: 1px solid rgba(255, 255, 255, 0.2); vertical-align: top;';
+    
+    html += '<tr>';
+    cells.forEach(cell => {
+      // Apply formatting to cell content (preserve existing HTML like citation links)
+      const formattedCell = cell
+        .replace(/\*\*([^*]+?)\*\*/g, '<strong style="color: var(--accent);">$1</strong>')
+        .replace(/(?<![\*<])\*([^*]+?)\*(?![>*])/g, '<em style="color: var(--accent-2);">$1</em>')
+        .replace(/`([^`]+?)`/g, '<code style="background: rgba(14, 165, 233, 0.15); padding: 1px 3px; border-radius: 2px;">$1</code>');
+      
+      html += `<${cellTag} style="${cellStyle}">${formattedCell}</${cellTag}>`;
+    });
+    html += '</tr>';
+  });
+  
+  html += '</table>';
+  console.log('Generated table HTML:', html.substring(0, 200) + '...');
+  return html;
+}
+
 // Show citation context or web snippet in a modal/panel
 function showCitationContext(ref, type) {
   // Try to find citation in the last citations panel
@@ -178,7 +327,7 @@ function showCitationContext(ref, type) {
       </div>
       <div class="citation-content">
         <h5>Referenced Content:</h5>
-        <div class="content-text">${displayContent.replace(/\n/g, '<br>')}</div>
+        <div class="content-text" style="line-height: 1.6; text-align: justify;">${applyMarkdownFormatting(displayContent)}</div>
       </div>
     `;
   } else {
@@ -297,7 +446,9 @@ async function sendChat() {
     });
     // Try to detect if this is a streaming (SSE) response
     const contentType = res.headers.get('content-type') || '';
+    console.log('Response content-type:', contentType);
     if (contentType.includes('text/event-stream')) {
+      console.log('Processing as streaming SSE response');
       // Parse SSE stream
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -314,7 +465,19 @@ async function sendChat() {
         } else if (currentEvent === 'error') {
           appendMessage('assistant', `\n[Error] ${currentData}`);
         } else if (currentEvent === 'end') {
+          console.log('Stream end event received!');
           assistantBubble.classList.remove('streaming');
+          // Apply formatting to the final complete text
+          const finalText = assistantBubble.textContent || '';
+          console.log('Streaming ended, applying formatting to final text:', finalText.substring(0, 200) + '...');
+          if (finalText.trim()) {
+            console.log('About to apply renderAssistantAnswer formatting...');
+            assistantBubble.innerHTML = ''; // Clear previous content
+            renderAssistantAnswer(assistantBubble, finalText);
+            console.log('Formatting applied!');
+          } else {
+            console.log('No text to format (empty finalText)');
+          }
         } else {
           assistantBubble.textContent += currentData;
         }
@@ -342,9 +505,14 @@ async function sendChat() {
       if (currentData) flushEvent();
     } else {
       // Non-streaming: parse as JSON and display
+      console.log('Processing as non-streaming JSON response');
       const data = await readJsonOrText(res);
       if (!res.ok) throw new Error(data.error || 'Error');
-      if (data.answer) assistantBubble.textContent = data.answer;
+      if (data.answer) {
+        console.log('Non-streaming answer received, applying formatting...');
+        assistantBubble.innerHTML = ''; // Clear previous content
+        renderAssistantAnswer(assistantBubble, data.answer);
+      }
       if (data.citations) renderCitations(data.citations);
       assistantBubble.classList.remove('streaming');
       if (data.conversationId) {
@@ -444,28 +612,257 @@ async function ingestSelected() {
     log.textContent = 'No files selected.';
     return;
   }
-  log.textContent = `Ingesting ${files.length} files...\n`;
+  log.textContent = `Ingesting ${files.length} files using R2 workflow...\n`;
 
   for (const f of files) {
     try {
-      const text = await extractTextFromFile(f);
-      const id = f.name.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase();
-      const body = { id, text, title: f.name, source: f.name };
-      const res = await fetch(`${getEndpoint()}/ingest`, {
+      log.textContent += `Step 1/2: Uploading ${f.name} to R2 storage (${f.size} bytes)...\n`;
+      
+      // Step 1: Upload file to R2
+      const uploadFormData = new FormData();
+      uploadFormData.append('file', f);
+      
+      const uploadRes = await fetch(`${getEndpoint()}/upload-r2`, {
         method: 'POST',
-        headers: { ...JSON_HEADERS, ...getAuthHeaders() },
-        body: JSON.stringify(body)
+        body: uploadFormData
       });
-      const data = await readJsonOrText(res);
-      if (!res.ok) throw new Error(data.error || 'Error');
-      log.textContent += `OK: ${f.name} (chunks=${data.chunks})\n`;
+      
+      const uploadData = await readJsonOrText(uploadRes);
+      if (!uploadRes.ok) throw new Error(uploadData.error || 'Upload failed');
+      
+      log.textContent += `Upload successful: ${uploadData.filename}\n`;
+      log.textContent += `Step 2/2: Processing ${f.name} from R2 storage...\n`;
+      
+      // Step 2: Process file from R2
+      const processRes = await fetch(`${getEndpoint()}/process-r2`, {
+        method: 'POST',
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ filename: uploadData.filename })
+      });
+      
+      const processData = await readJsonOrText(processRes);
+      if (!processRes.ok) throw new Error(processData.error || 'Processing failed');
+      
+      log.textContent += `SUCCESS: ${f.name} processed!\n`;
+      log.textContent += `Stats: ${processData.stats.success_count}/${processData.stats.total_chunks} chunks successful\n`;
+      log.textContent += `File size: ${(processData.stats.file_size / 1024 / 1024).toFixed(2)} MB\n`;
+      
     } catch (err) {
       log.textContent += `FAIL: ${f.name} → ${String(err.message || err)}\n`;
     }
   }
 }
 
+// Sidebar toggle functionality
+function initSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const sidebarToggle = document.getElementById('sidebarToggle');
+  const sidebarClose = document.getElementById('sidebarClose');
+  
+  function openSidebar() {
+    sidebar.classList.add('open');
+  }
+  
+  function closeSidebar() {
+    sidebar.classList.remove('open');
+  }
+  
+  sidebarToggle.addEventListener('click', openSidebar);
+  sidebarClose.addEventListener('click', closeSidebar);
+  
+  // Close sidebar when clicking outside
+  document.addEventListener('click', (e) => {
+    if (sidebar.classList.contains('open') && 
+        !sidebar.contains(e.target) && 
+        !sidebarToggle.contains(e.target)) {
+      closeSidebar();
+    }
+  });
+  
+  // Close sidebar on ESC key
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && sidebar.classList.contains('open')) {
+      closeSidebar();
+    }
+  });
+}
+
+// ---- Document Management ----
+
+async function listDocuments() {
+  const log = document.getElementById('log');
+  const documentsList = document.getElementById('documentsList');
+  const documentsSelect = document.getElementById('documentsSelect');
+  
+  try {
+    log.textContent += 'Fetching document list...\n';
+    
+    const res = await fetch(`${getEndpoint()}/debug/list-documents`, {
+      headers: { ...getAuthHeaders() }
+    });
+    
+    const docs = await readJsonOrText(res);
+    if (!res.ok) throw new Error(docs.error || 'Failed to fetch documents');
+    
+    documentsSelect.innerHTML = '';
+    
+    if (docs.length === 0) {
+      log.textContent += 'No documents found in the system.\n';
+      const opt = document.createElement('option');
+      opt.textContent = 'No documents available';
+      opt.disabled = true;
+      documentsSelect.appendChild(opt);
+    } else {
+      log.textContent += `Found ${docs.length} documents:\n`;
+      
+      docs.forEach((doc, i) => {
+        const opt = document.createElement('option');
+        opt.value = doc.doc_id;
+        // Truncate long doc IDs for better display
+        const displayId = doc.doc_id.length > 40 ? doc.doc_id.substring(0, 40) + '...' : doc.doc_id;
+        const displayTitle = doc.title && doc.title !== doc.doc_id ? doc.title : displayId;
+        opt.textContent = `${displayTitle} (${doc.chunk_count} chunks, ${Math.round(doc.total_size / 1024)} KB)`;
+        opt.title = doc.doc_id; // Show full ID in tooltip
+        documentsSelect.appendChild(opt);
+        
+        log.textContent += `${i + 1}. ${doc.doc_id} - ${doc.chunk_count} chunks\n`;
+      });
+    }
+    
+    documentsList.style.display = 'block';
+    
+  } catch (error) {
+    log.textContent += `Error: ${error.message}\n`;
+  }
+}
+
+async function viewDocumentStats() {
+  const documentsSelect = document.getElementById('documentsSelect');
+  const docStats = document.getElementById('docStats');
+  const docStatsContent = document.getElementById('docStatsContent');
+  const log = document.getElementById('log');
+  
+  const selectedDocId = documentsSelect.value;
+  if (!selectedDocId) {
+    log.textContent += 'Please select a document first.\n';
+    return;
+  }
+  
+  try {
+    log.textContent += `Fetching stats for: ${selectedDocId}\n`;
+    
+    const res = await fetch(`${getEndpoint()}/debug/document-stats?doc_id=${encodeURIComponent(selectedDocId)}`, {
+      headers: { ...getAuthHeaders() }
+    });
+    
+    const stats = await readJsonOrText(res);
+    if (!res.ok) throw new Error(stats.error || 'Failed to fetch document stats');
+    
+    docStatsContent.innerHTML = `
+      <p><strong>Document ID:</strong> ${stats.doc_id}</p>
+      <p><strong>Title:</strong> ${stats.title || 'N/A'}</p>
+      <p><strong>Source:</strong> ${stats.source || 'N/A'}</p>
+      <p><strong>Chunks:</strong> ${stats.chunk_count}</p>
+      <p><strong>Total Size:</strong> ${Math.round(stats.total_size / 1024)} KB</p>
+    `;
+    
+    docStats.style.display = 'block';
+    log.textContent += `Stats loaded for ${selectedDocId}\n`;
+    
+  } catch (error) {
+    log.textContent += `Error: ${error.message}\n`;
+  }
+}
+
+async function deleteDocument() {
+  const documentsSelect = document.getElementById('documentsSelect');
+  const log = document.getElementById('log');
+  
+  const selectedDocId = documentsSelect.value;
+  if (!selectedDocId) {
+    log.textContent += 'Please select a document to delete.\n';
+    return;
+  }
+  
+  const selectedText = documentsSelect.options[documentsSelect.selectedIndex].textContent;
+  
+  if (!confirm(`⚠️ Are you sure you want to delete this document?\n\n${selectedText}\n\nThis action cannot be undone!`)) {
+    log.textContent += 'Deletion cancelled.\n';
+    return;
+  }
+  
+  try {
+    log.textContent += `Deleting document: ${selectedDocId}\n`;
+    
+    const res = await fetch(`${getEndpoint()}/admin/delete-document`, {
+      method: 'DELETE',
+      headers: { ...getAuthHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({ doc_id: selectedDocId })
+    });
+    
+    const result = await readJsonOrText(res);
+    if (!res.ok) throw new Error(result.error || 'Failed to delete document');
+    
+    log.textContent += `✅ Successfully deleted ${result.deleted_chunks} chunks from ${selectedDocId}\n`;
+    
+    // Refresh the document list
+    await listDocuments();
+    
+    // Hide stats if they were showing the deleted doc
+    document.getElementById('docStats').style.display = 'none';
+    
+  } catch (error) {
+    log.textContent += `❌ Delete failed: ${error.message}\n`;
+  }
+}
+
+async function cleanupAllDocuments() {
+  const log = document.getElementById('log');
+  
+  if (!confirm('⚠️ DANGER: This will delete ALL documents and vectors!\n\nThis action is IRREVERSIBLE!\n\nType "DELETE ALL" in the next prompt to confirm.')) {
+    log.textContent += 'Cleanup cancelled.\n';
+    return;
+  }
+  
+  const confirmation = prompt('Type "DELETE ALL" to confirm complete cleanup:');
+  if (confirmation !== 'DELETE ALL') {
+    log.textContent += 'Cleanup cancelled - incorrect confirmation.\n';
+    return;
+  }
+  
+  try {
+    log.textContent += '🗑️ Starting complete cleanup...\n';
+    
+    const res = await fetch(`${getEndpoint()}/admin/cleanup-all`, {
+      method: 'DELETE',
+      headers: { ...getAuthHeaders() }
+    });
+    
+    const result = await readJsonOrText(res);
+    if (!res.ok) throw new Error(result.error || 'Failed to cleanup documents');
+    
+    log.textContent += `✅ Cleanup complete: ${result.deleted_vectors} vectors deleted\n`;
+    
+    // Clear the document list
+    const documentsSelect = document.getElementById('documentsSelect');
+    documentsSelect.innerHTML = '<option disabled>No documents available</option>';
+    
+    // Hide panels
+    document.getElementById('documentsList').style.display = 'none';
+    document.getElementById('docStats').style.display = 'none';
+    
+  } catch (error) {
+    log.textContent += `❌ Cleanup failed: ${error.message}\n`;
+  }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
+  console.log('JavaScript loaded and DOM ready!');
+  
+  // Initialize sidebar
+  initSidebar();
+  
+  // Initialize existing functionality
   renderConversationSelect();
   getSelect('conversations').addEventListener('change', (e) => {
     const id = e.target.value;
@@ -477,4 +874,11 @@ window.addEventListener('DOMContentLoaded', () => {
   getEl('exportConversation').addEventListener('click', exportConversation);
   getEl('sendChat').addEventListener('click', sendChat);
   getEl('ingestBtn').addEventListener('click', ingestSelected);
+  
+  // Initialize document management
+  getEl('listDocsBtn').addEventListener('click', listDocuments);
+  getEl('refreshDocsBtn').addEventListener('click', listDocuments);
+  getEl('viewDocBtn').addEventListener('click', viewDocumentStats);
+  getEl('deleteDocBtn').addEventListener('click', deleteDocument);
+  getEl('cleanupAllBtn').addEventListener('click', cleanupAllDocuments);
 });

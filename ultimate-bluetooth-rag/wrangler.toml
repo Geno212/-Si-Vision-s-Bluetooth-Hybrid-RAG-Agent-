@@ -26,7 +26,7 @@ TOP_RERANK = "5"               # keep after rerank
 
 # Model choices (Workers AI) - UPGRADED TO 120B
 MODEL_GENERATION = "@cf/openai/gpt-oss-120b"    # Enhanced reasoning model
-MODEL_EMBEDDING = "@cf/baai/bge-m3"             # Multi-functionality embedding
+MODEL_EMBEDDING = "@cf/baai/bge-large-en-v1.5"  # More robust embedding for large documents
 MODEL_RERANK = "@cf/baai/bge-reranker-base"     # Keep existing reranker 
 
 # Chat configuration (optional defaults)
