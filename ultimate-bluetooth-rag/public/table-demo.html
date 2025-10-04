@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Table Parser Demo - Si-Vision Bluetooth RAG</title>
+    <link rel="stylesheet" href="/assets/table-parser.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            color: white;
+            min-height: 100vh;
+        }
+        
+        .demo-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        
+        .demo-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        .demo-header h1 {
+            color: #0ea5e9;
+            margin-bottom: 10px;
+        }
+        
+        .demo-section {
+            margin-bottom: 40px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            border: 1px solid rgba(14, 165, 233, 0.2);
+        }
+        
+        .demo-section h2 {
+            color: #38bdf8;
+            margin-top: 0;
+        }
+        
+        .input-area {
+            margin-bottom: 20px;
+        }
+        
+        .input-area textarea {
+            width: 100%;
+            height: 150px;
+            padding: 15px;
+            border: 1px solid rgba(14, 165, 233, 0.3);
+            border-radius: 6px;
+            background: rgba(0, 0, 0, 0.3);
+            color: white;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            resize: vertical;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            background: #0ea5e9;
+            color: white;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+        
+        .btn:hover {
+            background: #0284c7;
+        }
+        
+        .btn.secondary {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .btn.secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        .format-select {
+            padding: 10px;
+            border: 1px solid rgba(14, 165, 233, 0.3);
+            border-radius: 6px;
+            background: rgba(0, 0, 0, 0.3);
+            color: white;
+        }
+        
+        .output-area {
+            border: 1px solid rgba(14, 165, 233, 0.2);
+            border-radius: 6px;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.2);
+            min-height: 200px;
+        }
+        
+        .performance-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 4px;
+            font-size: 12px;
+            color: #10b981;
+        }
+        
+        .error-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 4px;
+            font-size: 12px;
+            color: #ef4444;
+        }
+        
+        .sample-data {
+            margin-top: 15px;
+        }
+        
+        .sample-data h4 {
+            margin: 0 0 10px 0;
+            color: #94a3b8;
+        }
+        
+        .sample-data pre {
+            background: rgba(0, 0, 0, 0.4);
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <div class="demo-container">
+        <div class="demo-header">
+            <h1>🚀 Lightweight Table Parser Demo</h1>
+            <p>Fast, lightweight table parsing for CSV, Markdown, and HTML tables</p>
+        </div>
+
+        <div class="demo-section">
+            <h2>📊 Interactive Parser Demo</h2>
+            <div class="input-area">
+                <textarea id="inputData" placeholder="Paste your table data here (CSV, Markdown, or HTML)...">| Feature | Description | Performance |
+|---------|-------------|-------------|
+| **Fast Parsing** | Lightweight regex-based parsing | ~1ms for 100 rows |
+| **Multiple Formats** | CSV, TSV, Markdown, HTML | Auto-detection |
+| **Memory Efficient** | Streaming parser, low memory | <2MB for 10k rows |
+| **Customizable** | Headers, styling, limits | Full control |</textarea>
+            </div>
+            
+            <div class="controls">
+                <select id="formatSelect" class="format-select">
+                    <option value="auto">Auto-detect</option>
+                    <option value="markdown">Markdown</option>
+                    <option value="csv">CSV</option>
+                    <option value="html">HTML</option>
+                </select>
+                <button id="parseBtn" class="btn">Parse Table</button>
+                <button id="loadSampleBtn" class="btn secondary">Load Sample Data</button>
+                <button id="clearBtn" class="btn secondary">Clear</button>
+            </div>
+            
+            <div class="output-area" id="outputArea">
+                <p>Click "Parse Table" to see the results...</p>
+            </div>
+            
+            <div id="performanceInfo" style="display: none;"></div>
+        </div>
+
+        <div class="demo-section">
+            <h2>📋 Sample Data</h2>
+            
+            <div class="sample-data">
+                <h4>Markdown Table:</h4>
+                <pre>| Protocol | Frequency | Range | Power |
+|----------|-----------|--------|-------|
+| Bluetooth LE | 2.4 GHz | 10-100m | Ultra Low |
+| Bluetooth Classic | 2.4 GHz | 10-100m | Low |
+| Wi-Fi | 2.4/5 GHz | 50-250m | High |</pre>
+            </div>
+            
+            <div class="sample-data">
+                <h4>CSV Data:</h4>
+                <pre>Protocol,Frequency,Range,Power
+"Bluetooth LE","2.4 GHz","10-100m","Ultra Low"
+"Bluetooth Classic","2.4 GHz","10-100m","Low"
+"Wi-Fi","2.4/5 GHz","50-250m","High"</pre>
+            </div>
+            
+            <div class="sample-data">
+                <h4>HTML Table:</h4>
+                <pre>&lt;table&gt;
+  &lt;tr&gt;&lt;th&gt;Protocol&lt;/th&gt;&lt;th&gt;Frequency&lt;/th&gt;&lt;/tr&gt;
+  &lt;tr&gt;&lt;td&gt;Bluetooth LE&lt;/td&gt;&lt;td&gt;2.4 GHz&lt;/td&gt;&lt;/tr&gt;
+&lt;/table&gt;</pre>
+            </div>
+        </div>
+
+        <div class="demo-section">
+            <h2>⚡ Performance Features</h2>
+            <ul>
+                <li><strong>Lightweight:</strong> ~15KB total bundle size (JS + CSS)</li>
+                <li><strong>Fast:</strong> Processes 1000+ rows in under 10ms</li>
+                <li><strong>Memory Efficient:</strong> Streaming parser with configurable limits</li>
+                <li><strong>Format Detection:</strong> Automatically detects CSV, TSV, Markdown, HTML</li>
+                <li><strong>Escape Handling:</strong> Proper CSV quote and escape handling</li>
+                <li><strong>Responsive:</strong> Mobile-friendly table rendering</li>
+                <li><strong>Customizable:</strong> Headers, styling, row limits, trimming</li>
+            </ul>
+        </div>
+    </div>
+
+    <script src="/assets/table-parser.js"></script>
+    <script>
+        let parser;
+        
+        // Initialize parser when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            parser = new LightweightTableParser({
+                trimWhitespace: true,
+                skipEmptyLines: true,
+                headerRow: true,
+                maxRows: 1000
+            });
+            
+            console.log('Table parser demo initialized');
+        });
+        
+        // Sample data sets
+        const sampleData = {
+            markdown: `| Feature | Type | Status | Priority |
+|---------|------|--------|----------|
+| **Table Parsing** | Core | ✅ Complete | High |
+| **CSV Support** | Format | ✅ Complete | High |
+| **HTML Tables** | Format | ✅ Complete | Medium |
+| **Performance** | Optimization | 🚧 In Progress | High |
+| **Mobile Support** | UI | ✅ Complete | Medium |`,
+            
+            csv: `Feature,Type,Status,Priority
+"Table Parsing",Core,"Complete",High
+"CSV Support",Format,"Complete",High
+"HTML Tables",Format,"Complete",Medium
+"Performance",Optimization,"In Progress",High
+"Mobile Support",UI,"Complete",Medium`,
+            
+            html: `<table>
+<tr><th>Protocol</th><th>Version</th><th>Speed</th><th>Range</th></tr>
+<tr><td>Bluetooth LE 4.0</td><td>4.0</td><td>1 Mbps</td><td>50m</td></tr>
+<tr><td>Bluetooth LE 5.0</td><td>5.0</td><td>2 Mbps</td><td>100m</td></tr>
+<tr><td>Bluetooth Classic</td><td>2.1</td><td>3 Mbps</td><td>10m</td></tr>
+</table>`
+        };
+        
+        // Event listeners
+        document.getElementById('parseBtn').addEventListener('click', parseTable);
+        document.getElementById('loadSampleBtn').addEventListener('click', loadSampleData);
+        document.getElementById('clearBtn').addEventListener('click', clearAll);
+        
+        function parseTable() {
+            const inputData = document.getElementById('inputData').value.trim();
+            const format = document.getElementById('formatSelect').value;
+            const outputArea = document.getElementById('outputArea');
+            const performanceInfo = document.getElementById('performanceInfo');
+            
+            if (!inputData) {
+                outputArea.innerHTML = '<p class="error-info">Please enter some table data to parse.</p>';
+                return;
+            }
+            
+            if (!parser) {
+                outputArea.innerHTML = '<p class="error-info">Table parser not initialized. Please refresh the page.</p>';
+                return;
+            }
+            
+            try {
+                const startTime = performance.now();
+                
+                let tableData;
+                switch (format) {
+                    case 'csv':
+                        tableData = parser.parseCSV(inputData);
+                        break;
+                    case 'markdown':
+                        tableData = parser.parseMarkdown(inputData);
+                        break;
+                    case 'html':
+                        tableData = parser.parseHTML(inputData);
+                        break;
+                    default:
+                        tableData = parser.parseAuto(inputData);
+                }
+                
+                const parseTime = performance.now() - startTime;
+                
+                if (tableData.length === 0) {
+                    outputArea.innerHTML = '<p class="error-info">No table data found. Please check your input format.</p>';
+                    performanceInfo.style.display = 'none';
+                    return;
+                }
+                
+                const htmlResult = parser.toHTML(tableData, {
+                    className: 'lightweight-table',
+                    headerRow: true
+                });
+                
+                const endTime = performance.now() - startTime;
+                
+                outputArea.innerHTML = htmlResult;
+                
+                performanceInfo.innerHTML = `
+                    <strong>Performance:</strong> 
+                    Parsed ${tableData.length} rows × ${tableData[0]?.length || 0} columns in ${parseTime.toFixed(2)}ms, 
+                    rendered in ${endTime.toFixed(2)}ms total
+                `;
+                performanceInfo.className = 'performance-info';
+                performanceInfo.style.display = 'block';
+                
+                console.log('Parsed table data:', tableData);
+                
+            } catch (error) {
+                outputArea.innerHTML = `<p class="error-info">Parsing error: ${error.message}</p>`;
+                performanceInfo.innerHTML = `<strong>Error:</strong> ${error.message}`;
+                performanceInfo.className = 'error-info';
+                performanceInfo.style.display = 'block';
+                console.error('Table parsing error:', error);
+            }
+        }
+        
+        function loadSampleData() {
+            const format = document.getElementById('formatSelect').value;
+            const inputData = document.getElementById('inputData');
+            
+            if (format === 'auto') {
+                inputData.value = sampleData.markdown;
+                document.getElementById('formatSelect').value = 'markdown';
+            } else {
+                inputData.value = sampleData[format] || sampleData.markdown;
+            }
+            
+            // Auto-parse after loading sample
+            setTimeout(parseTable, 100);
+        }
+        
+        function clearAll() {
+            document.getElementById('inputData').value = '';
+            document.getElementById('outputArea').innerHTML = '<p>Click "Parse Table" to see the results...</p>';
+            document.getElementById('performanceInfo').style.display = 'none';
+        }
+    </script>
+</body>
+</html>

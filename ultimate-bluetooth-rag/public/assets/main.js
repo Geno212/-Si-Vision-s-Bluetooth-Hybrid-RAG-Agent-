@@ -166,9 +166,16 @@ function renderAssistantAnswer(container, answerText) {
 function applyMarkdownFormatting(text) {
   console.log('applyMarkdownFormatting input:', text);
   
-  // Skip table parsing for now - let tables display as plain text with better formatting
+  // First, parse and convert any tables using our lightweight parser
+  let processedText = text;
   
-  const result = text
+  // Check if the text contains table-like content and parse it
+  if (processedText.includes('|') && processedText.split('\n').some(line => line.trim().includes('|'))) {
+    console.log('Table-like content detected, parsing...');
+    processedText = parseMarkdownTables(processedText);
+  }
+  
+  const result = processedText
     // Bold text: **text** -> <strong>text</strong>
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong style="color: var(--accent); font-weight: 600;">$1</strong>')
     // Italic text: *text* -> <em>text</em> (but avoid interfering with bold)
@@ -185,8 +192,6 @@ function applyMarkdownFormatting(text) {
     .replace(/^>\s+(.+)$/gm, '<blockquote style="border-left: 3px solid var(--accent); padding-left: 1em; margin: 0.5em 0; font-style: italic; color: var(--accent-2);">$1</blockquote>')
     // Horizontal rules: --- -> <hr>
     .replace(/^---+$/gm, '<hr style="border: none; border-top: 1px solid rgba(255,255,255,0.2); margin: 1em 0;">')
-    // Style pipe characters for better table readability
-    .replace(/\|/g, '<span style="color: var(--accent); margin: 0 4px;">|</span>')
     // Line breaks for better spacing (preserve double breaks for paragraphs)
     .replace(/\n\n/g, '<br><br>')
     .replace(/\n/g, '<br>');
@@ -195,8 +200,100 @@ function applyMarkdownFormatting(text) {
   return result;
 }
 
-// Simple table parser that preserves content
-function simpleTableParser(text) {
+// Initialize lightweight table parser
+let tableParser = null;
+
+// Initialize table parser when available
+function initTableParser() {
+  if (typeof LightweightTableParser !== 'undefined' && !tableParser) {
+    tableParser = new LightweightTableParser({
+      trimWhitespace: true,
+      skipEmptyLines: true,
+      headerRow: true,
+      maxRows: 1000 // Limit for performance
+    });
+    console.log('✅ Lightweight table parser initialized successfully');
+  } else if (typeof LightweightTableParser === 'undefined') {
+    console.warn('❌ LightweightTableParser not found - table parsing will use fallback');
+  } else if (tableParser) {
+    console.log('✅ Table parser already initialized');
+  }
+}
+
+// Enhanced table parser with fallback
+function parseTableContent(text, format = 'auto') {
+  // Initialize parser if not already done
+  initTableParser();
+  
+  if (!tableParser) {
+    console.warn('Table parser not available, using fallback');
+    return simpleTableParserFallback(text);
+  }
+  
+  try {
+    let tableData;
+    
+    switch (format) {
+      case 'csv':
+        tableData = tableParser.parseCSV(text);
+        break;
+      case 'markdown':
+        tableData = tableParser.parseMarkdown(text);
+        break;
+      case 'html':
+        tableData = tableParser.parseHTML(text);
+        break;
+      default:
+        tableData = tableParser.parseAuto(text);
+    }
+    
+    if (tableData.length > 0) {
+      // Use our custom HTML generation with enhanced cell processing
+      return generateEnhancedTableHTML(tableData);
+    }
+    
+    return simpleTableParserFallback(text);
+  } catch (error) {
+    console.warn('Table parsing failed, using fallback:', error);
+    return simpleTableParserFallback(text);
+  }
+}
+
+// Generate enhanced table HTML with proper cell processing
+function generateEnhancedTableHTML(tableData) {
+  if (!Array.isArray(tableData) || tableData.length === 0) return '';
+  
+  let html = '<table class="lightweight-table" style="border-collapse: collapse; margin: 1em 0; width: 100%; background: rgba(255, 255, 255, 0.05); border-radius: 4px;">';
+  
+  tableData.forEach((row, rowIndex) => {
+    if (!Array.isArray(row)) return;
+    
+    const isHeader = rowIndex === 0;
+    const cellTag = isHeader ? 'th' : 'td';
+    const cellStyle = isHeader 
+      ? 'padding: 8px 12px; border: 1px solid rgba(14, 165, 233, 0.3); background: rgba(14, 165, 233, 0.1); font-weight: bold; color: var(--accent);'
+      : 'padding: 6px 12px; border: 1px solid rgba(255, 255, 255, 0.2); vertical-align: top;';
+    
+    html += '<tr>';
+    row.forEach(cell => {
+      const formattedCell = processCellContent(cell || '');
+      html += `<${cellTag} style="${cellStyle}">${formattedCell}</${cellTag}>`;
+    });
+    html += '</tr>';
+  });
+  
+  html += '</table>';
+  
+  // Attach citation handlers after a short delay
+  setTimeout(() => {
+    attachCitationHandlersToTables();
+  }, 50);
+  
+  return html;
+}
+
+// Fallback simple table parser
+function simpleTableParserFallback(text) {
   // Convert simple table rows to basic HTML
   return text.replace(/^\|(.+)\|$/gm, (match, content) => {
     // Skip separator rows
@@ -208,10 +305,18 @@ function simpleTableParser(text) {
   });
 }
 
-// Enhanced table parser for complex markdown tables
+// Enhanced table parser for complex markdown tables with lightweight parser integration
 function parseMarkdownTables(text) {
   console.log('parseMarkdownTables input:', text.substring(0, 300) + '...');
   
+  // Try the lightweight parser first
+  const enhancedResult = parseTableContent(text, 'markdown');
+  if (enhancedResult && enhancedResult.includes('<table')) {
+    console.log('Using lightweight parser result');
+    return enhancedResult;
+  }
+  
+  // Fallback to existing logic for complex cases
   const lines = text.split('\n');
   let result = [];
   let inTable = false;
@@ -236,7 +341,7 @@ function parseMarkdownTables(text) {
       // End of table, process accumulated rows
       console.log('Ending table, rows collected:', tableRows.length);
       if (tableRows.length > 0) {
-        const tableHtml = renderMarkdownTable(tableRows);
+        const tableHtml = renderMarkdownTableOptimized(tableRows);
         result.push(tableHtml);
         tableRows = [];
       }
@@ -250,11 +355,27 @@ function parseMarkdownTables(text) {
   // Handle table at end of text
   if (inTable && tableRows.length > 0) {
     console.log('Ending table at end, rows collected:', tableRows.length);
-    result.push(renderMarkdownTable(tableRows));
+    result.push(renderMarkdownTableOptimized(tableRows));
   }
   
   console.log('parseMarkdownTables output:', result.join('\n').substring(0, 300) + '...');
   return result.join('\n');
+}
+
+// Optimized table renderer using lightweight parser when available
+function renderMarkdownTableOptimized(rows) {
+  console.log('renderMarkdownTableOptimized called with rows:', rows);
+  if (rows.length === 0) return '';
+  
+  // Try using lightweight parser for better performance
+  const markdownText = rows.join('\n');
+  const enhancedResult = parseTableContent(markdownText, 'markdown');
+  if (enhancedResult && enhancedResult.includes('<table')) {
+    return enhancedResult;
+  }
+  
+  // Fallback to existing renderer
+  return renderMarkdownTable(rows);
 }
 
 // Render a complete markdown table to HTML
@@ -272,7 +393,7 @@ function renderMarkdownTable(rows) {
   
   if (dataRows.length === 0) return '';
   
-  let html = '<table style="border-collapse: collapse; margin: 1em 0; width: 100%; background: rgba(255, 255, 255, 0.05); border-radius: 4px;">';
+  let html = '<table class="lightweight-table" style="border-collapse: collapse; margin: 1em 0; width: 100%; background: rgba(255, 255, 255, 0.05); border-radius: 4px;">';
   
   dataRows.forEach((row, index) => {
     const cells = row.split('|').map(cell => cell.trim()).filter(cell => cell !== '');
@@ -288,11 +409,8 @@ function renderMarkdownTable(rows) {
     
     html += '<tr>';
     cells.forEach(cell => {
-      // Apply formatting to cell content (preserve existing HTML like citation links)
-      const formattedCell = cell
-        .replace(/\*\*([^*]+?)\*\*/g, '<strong style="color: var(--accent);">$1</strong>')
-        .replace(/(?<![\*<])\*([^*]+?)\*(?![>*])/g, '<em style="color: var(--accent-2);">$1</em>')
-        .replace(/`([^`]+?)`/g, '<code style="background: rgba(14, 165, 233, 0.15); padding: 1px 3px; border-radius: 2px;">$1</code>');
+      // Process cell content through enhanced formatting pipeline
+      let formattedCell = processCellContent(cell);
       
       html += `<${cellTag} style="${cellStyle}">${formattedCell}</${cellTag}>`;
     });
@@ -301,7 +419,65 @@ function renderMarkdownTable(rows) {
   
   html += '</table>';
   console.log('Generated table HTML:', html.substring(0, 200) + '...');
+  
+  // Set a short timeout to attach citation handlers after DOM is updated
+  setTimeout(() => {
+    attachCitationHandlersToTables();
+  }, 50);
+  
   return html;
+}
+
+// Process individual cell content with proper formatting
+function processCellContent(cellText) {
+  if (!cellText || typeof cellText !== 'string') return '';
+  
+  let processed = cellText
+    // Handle line breaks first
+    .replace(/\n/g, '<br>')
+    .replace(/<br>\s*<br>/g, '<br>')  // Avoid double breaks
+    
+    // Bold text: **text** -> <strong>text</strong>
+    .replace(/\*\*([^*\n]+?)\*\*/g, '<strong style="color: var(--accent); font-weight: 600;">$1</strong>')
+    
+    // Italic text: *text* -> <em>text</em> (but avoid interfering with bold)
+    .replace(/(?<!\*)\*([^*\n]+?)\*(?!\*)/g, '<em style="color: var(--accent-2); font-style: italic;">$1</em>')
+    
+    // Code inline: `code` -> <code>code</code>
+    .replace(/`([^`\n]+?)`/g, '<code style="background: rgba(14, 165, 233, 0.1); color: var(--accent-2); padding: 2px 4px; border-radius: 3px; font-family: monospace; border: 1px solid rgba(14, 165, 233, 0.2);">$1</code>')
+    
+    // Citation links: [#123], [1], [7] -> clickable links
+    .replace(/\[([#]?\d+)\]/g, '<span class="citation-link table-citation" data-citation="$1" data-type="ingested" title="Click to view citation" style="color: var(--accent); cursor: pointer; text-decoration: underline; font-weight: 500;">[$1]</span>')
+    
+    // Handle text that looks like it could be sources/references
+    .replace(/\b(source|ref|reference):\s*([^<\n]+)/gi, '<span style="color: var(--accent-2); font-style: italic;">$1:</span> <span style="color: var(--accent);">$2</span>')
+    
+    // URLs: handle basic URL detection  
+    .replace(/(https?:\/\/[^\s<>"{}|\\^`\[\]]+)/g, '<a href="$1" target="_blank" style="color: var(--accent); text-decoration: underline;">$1</a>');
+  
+  return processed;
+}
+
+// Attach citation handlers specifically to table citations
+function attachCitationHandlersToTables() {
+  // Find all table citation links that don't have handlers
+  const tableCitations = document.querySelectorAll('.table-citation:not([data-handler-attached])');
+  
+  tableCitations.forEach(link => {
+    link.addEventListener('click', function(e) {
+      const ref = this.getAttribute('data-citation');
+      const type = this.getAttribute('data-type') || 'ingested';
+      console.log('Table citation clicked:', ref, type);
+      showCitationContext(ref, type);
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    
+    // Mark as having handler attached
+    link.setAttribute('data-handler-attached', 'true');
+  });
+  
+  console.log(`Attached citation handlers to ${tableCitations.length} table citations`);
 }
 
 // Show citation context or web snippet in a modal/panel
@@ -858,6 +1034,9 @@ async function cleanupAllDocuments() {
 
 window.addEventListener('DOMContentLoaded', () => {
   console.log('JavaScript loaded and DOM ready!');
+  
+  // Initialize table parser
+  setTimeout(initTableParser, 100); // Give time for LightweightTableParser to load
   
   // Initialize sidebar
   initSidebar();
