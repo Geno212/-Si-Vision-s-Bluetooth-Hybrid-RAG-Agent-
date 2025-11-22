@@ -56,9 +56,9 @@
           </div>
 
           <div class="divider"></div>
-          <h3 class="panel-title">Ingest (.txt/.md/.tex/.pdf/.docx)</h3>
+          <h3 class="panel-title">Quick Ingest (.txt/.md/.tex)</h3>
           <div class="row">
-            <input id="ingestFiles" type="file" multiple accept=".txt,.md,.tex,.pdf/.docx" />
+            <input id="ingestFiles" type="file" multiple accept=".txt,.md,.tex" />
             <button id="ingestBtn" class="btn">Ingest</button>
           </div>
           <pre id="log" class="log-panel"></pre>
@@ -121,6 +121,45 @@
       <span class="modal-close">&times;</span>
       <h3></h3>
       <div class="modal-body"></div>
+    </div>
+  </div>
+  
+  <!-- Modal for correction feedback -->
+  <div id="correction-modal" class="modal-panel" style="display:none">
+    <div class="modal-content">
+      <span class="modal-close">&times;</span>
+      <h3>Help Improve the System</h3>
+      <div class="modal-body">
+        <div class="correction-form">
+          <div class="form-field">
+            <label>Your Question:</label>
+            <div class="readonly-field" id="correction-question"></div>
+          </div>
+          
+          <div class="form-field">
+            <label>Wrong Answer (what the system said):</label>
+            <div class="readonly-field wrong-answer" id="correction-wrong-answer"></div>
+          </div>
+          
+          <div class="form-field">
+            <label>Correct Answer: <span class="required">*</span></label>
+            <textarea id="correction-correct-answer" rows="6" placeholder="Please provide the correct answer..."></textarea>
+          </div>
+          
+          <div class="form-field optional">
+            <label>Alternative Question Phrasings (optional):</label>
+            <div id="variant-inputs">
+              <input type="text" class="variant-input" placeholder="E.g., 'How does BLE work?'" />
+            </div>
+            <button type="button" class="btn ghost small" id="add-variant-btn">+ Add variant</button>
+          </div>
+          
+          <div class="form-actions">
+            <button type="button" class="btn primary" id="submit-correction-btn">💾 Save Correction</button>
+            <button type="button" class="btn ghost" id="cancel-correction-btn">Cancel</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </body>

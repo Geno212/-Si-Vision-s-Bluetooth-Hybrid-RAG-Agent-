@@ -386,3 +386,174 @@ pre{background:var(--surface);border:1px solid var(--ring);border-radius:12px;pa
 
 /* Lightweight grid background asset */
 .grid-bg{position:absolute;inset:0;pointer-events:none;opacity:.06;mask-image:radial-gradient(80% 80% at 50% 0%,black,transparent)}
+
+/* ============================================================================
+   Human-in-the-Loop Feedback UI
+   ============================================================================ */
+
+/* Feedback buttons below assistant messages */
+.feedback-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--ring);
+}
+
+.feedback-btn {
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 6px;
+  border: 1px solid var(--ring);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.feedback-btn:hover {
+  background: var(--ring);
+  border-color: var(--accent-2);
+}
+
+.feedback-btn.approve {
+  color: #10b981;
+  border-color: #10b98133;
+}
+
+.feedback-btn.approve:hover {
+  background: #10b98111;
+  border-color: #10b981;
+}
+
+.feedback-btn.correct {
+  color: #f43f5e;
+  border-color: #f43f5e33;
+}
+
+.feedback-btn.correct:hover {
+  background: #f43f5e11;
+  border-color: #f43f5e;
+}
+
+/* Verified answer badge */
+.verified-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  margin-bottom: 8px;
+  background: linear-gradient(135deg, #10b98122 0%, #0ea5e922 100%);
+  border: 1px solid #10b98144;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #10b981;
+  font-weight: 600;
+}
+
+.verified-badge-icon {
+  font-size: 14px;
+}
+
+.verified-confidence {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* Correction modal form */
+.correction-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.form-field .required {
+  color: #f43f5e;
+}
+
+.readonly-field {
+  padding: 10px;
+  background: var(--ring);
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--muted);
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.readonly-field.wrong-answer {
+  border-left: 3px solid #f43f5e;
+  background: linear-gradient(90deg, #f43f5e11 0%, var(--ring) 100%);
+}
+
+.form-field textarea {
+  padding: 10px;
+  border: 1px solid var(--ring);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+
+.form-field textarea:focus {
+  outline: none;
+  border-color: var(--accent-2);
+  background: var(--card);
+}
+
+.variant-input {
+  width: 100%;
+  padding: 8px;
+  margin-bottom: 8px;
+  border: 1px solid var(--ring);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.variant-input:focus {
+  outline: none;
+  border-color: var(--accent-2);
+}
+
+#add-variant-btn {
+  align-self: flex-start;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.form-field.optional label {
+  color: var(--muted);
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ring);
+}
+
+.btn.small {
+  padding: 6px 12px;
+  font-size: 13px;
+}

@@ -1,9 +1,10 @@
 import { chunkText } from "./chunker";
-import type { Env, IngestRequestBody, QueryRequestBody, RetrievedChunk, ChatRequestBody, ChatResponse, Citation, ChatMessage, BluetoothToolRequest, BluetoothToolResponse } from "./types";
+import type { Env, IngestRequestBody, QueryRequestBody, RetrievedChunk, ChatRequestBody, ChatResponse, Citation, ChatMessage, BluetoothToolRequest, BluetoothToolResponse, CorrectionFeedbackRequest, ChatResponseMetadata } from "./types";
 import { embedText, embedTextBatch, embedTextSingle, rerank, synthesize, vectorizeQuery, vectorizeUpsert, numericEnv, expandQueries } from "./retrieval";
 import { AgentOrchestrator } from "./crew_agents";
 import { appendMessage, ensureConversation, exportConversation, getConversation, updateSummaryIfNeeded, clearConversation, saveConversation } from "./memory";
 import { handleListDocuments, handleDocumentStats, handleDeleteDocument, handleCleanupAll } from "./admin";
+import { checkCorrectionCache, storeCorrectionInCache, getCorrectionById, deleteCorrectionById, getCorrectionStats } from "./corrections";
 
 function cleanText(text: string): string {
   if (!text) return text;
@@ -723,18 +724,66 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
   await appendMessage(env, conversationId, { role: "user", content: lastUser.content });
   await updateSummaryIfNeeded(env, conversationId);
 
+  // ============================================================================
+  // 🆕 HUMAN-IN-THE-LOOP: Check correction cache FIRST
+  // ============================================================================
+  const userQuery = String(lastUser.content || "").trim();
+  const cacheHit = await checkCorrectionCache(env, userQuery);
+  
+  if (cacheHit.found && cacheHit.correction) {
+    console.log(`[CHAT] 🎯 Returning corrected answer from cache (confidence: ${cacheHit.confidence.toFixed(3)})`);
+    
+    // Build response metadata
+    const metadata: ChatResponseMetadata = {
+      source: "correction_cache",
+      verified: true,
+      confidence: cacheHit.confidence,
+      correctionId: cacheHit.correction.id,
+      timesReused: cacheHit.correction.timesReused,
+      originallyWrong: cacheHit.correction.wrongAnswer,
+    };
+    
+    // Create chat response with corrected answer
+    const chatResponse: ChatResponse & { metadata?: ChatResponseMetadata } = {
+      conversationId,
+      answer: cacheHit.correction.correctAnswer,
+      citations: [], // Corrected answers don't have citations unless we add them
+      metadata,
+    };
+    
+    // Persist assistant message
+    await appendMessage(env, conversationId, { role: "assistant", content: chatResponse.answer });
+    
+    const response = jsonResponse(chatResponse);
+    if (setCookieHeader) response.headers.set("set-cookie", setCookieHeader);
+    return response;
+  }
+  
+  console.log(`[CHAT] 🔍 No correction found in cache, proceeding with normal RAG flow`);
+
+  // ============================================================================
+  // Standard RAG Flow (when no correction exists)
+  // ============================================================================
   // --- CrewAI Orchestrator ---
   const orchestrator = new AgentOrchestrator();
   const t0 = Date.now();
   let chatResponse: ChatResponse;
   try {
-    chatResponse = await orchestrator.processQuery(env, conversationId, String(lastUser.content || "").trim(), undefined, undefined, maxIter);
+    chatResponse = await orchestrator.processQuery(env, conversationId, userQuery, undefined, undefined, maxIter);
   } catch (err: any) {
     console.log("[Orchestrator] ERROR", err);
     return jsonResponse({ error: String(err?.message ?? err) }, { status: 500 });
   }
   const ms = Date.now() - t0;
   try { console.log("CREWAI_CHAT_ANSWER", JSON.stringify({ conversationId, ms, chars: chatResponse.answer.length, citations: chatResponse.citations.length })); } catch {}
+
+  // Add metadata indicating this is from RAG (not verified)
+  const ragMetadata: ChatResponseMetadata = {
+    source: "rag",
+    verified: false,
+  };
+  
+  const responseWithMeta = { ...chatResponse, metadata: ragMetadata };
 
   // Persist assistant message and citations
   await appendMessage(env, conversationId, { role: "assistant", content: chatResponse.answer });
@@ -745,7 +794,7 @@ async function handleChat(request: Request, env: Env): Promise<Response> {
       await saveConversation(env, convAfter);
     }
   } catch {}
-  const base = jsonResponse(chatResponse);
+  const base = jsonResponse(responseWithMeta);
   if (setCookieHeader) base.headers.set("set-cookie", setCookieHeader);
   return base;
 }
@@ -1043,6 +1092,103 @@ export default {
       if (url.pathname === "/admin/cleanup-all" && request.method === "DELETE") {
         if (!requireAuth(request, env.API_AUTH_TOKEN)) return unauthorized();
         return handleCleanupAll(request, env);
+      }
+      
+      // ========================================================================
+      // Human-in-the-Loop Correction Endpoints
+      // ========================================================================
+      
+      // Submit a correction for a wrong answer
+      if (url.pathname === "/api/feedback/correct" && request.method === "POST") {
+        const { userId } = getOrSetUserIdCookie(request);
+        const body = (await request.json().catch(() => ({}))) as CorrectionFeedbackRequest;
+        
+        if (!body.originalQuery || !body.wrongAnswer || !body.correctAnswer) {
+          return jsonResponse({ 
+            error: "Missing required fields: originalQuery, wrongAnswer, correctAnswer" 
+          }, { status: 400 });
+        }
+        
+        const result = await storeCorrectionInCache(env, {
+          originalQuery: body.originalQuery,
+          wrongAnswer: body.wrongAnswer,
+          correctAnswer: body.correctAnswer,
+          questionVariants: body.questionVariants,
+          correctedBy: userId || "anonymous",
+          wrongAnswerSources: body.wrongAnswerSources,
+          correctAnswerSource: body.correctAnswerSource,
+          notes: body.notes,
+        });
+        
+        if (!result.success) {
+          return jsonResponse({ 
+            ok: false, 
+            error: result.error || "Failed to store correction" 
+          }, { status: 500 });
+        }
+        
+        return jsonResponse({ 
+          ok: true, 
+          correctionId: result.id,
+          message: "Correction saved successfully. Thank you for improving the system!" 
+        });
+      }
+      
+      // Get correction cache statistics
+      if (url.pathname === "/api/corrections/stats" && request.method === "GET") {
+        const stats = await getCorrectionStats(env);
+        return jsonResponse({ ok: true, stats });
+      }
+      
+      // Debug endpoint: Test cache lookup
+      if (url.pathname === "/api/corrections/debug-lookup" && request.method === "POST") {
+        const body = (await request.json().catch(() => ({}))) as { query: string };
+        if (!body.query) {
+          return jsonResponse({ error: "Missing query parameter" }, { status: 400 });
+        }
+        
+        const cacheHit = await checkCorrectionCache(env, body.query);
+        return jsonResponse({ 
+          ok: true, 
+          query: body.query,
+          cacheHit,
+          threshold: Number(env.CORRECTION_MATCH_THRESHOLD || "0.90")
+        });
+      }
+      
+      // Get a specific correction by ID
+      if (url.pathname.startsWith("/api/corrections/") && request.method === "GET") {
+        const correctionId = url.pathname.split("/")[3] || "";
+        if (!correctionId || correctionId === "stats") {
+          return jsonResponse({ error: "Missing correctionId" }, { status: 400 });
+        }
+        
+        const correction = await getCorrectionById(env, correctionId);
+        if (!correction) {
+          return jsonResponse({ error: "Correction not found" }, { status: 404 });
+        }
+        
+        return jsonResponse({ ok: true, correction });
+      }
+      
+      // Delete a correction (admin only)
+      if (url.pathname.startsWith("/api/corrections/") && request.method === "DELETE") {
+        if (!requireAuth(request, env.API_AUTH_TOKEN)) return unauthorized();
+        
+        const correctionId = url.pathname.split("/")[3] || "";
+        if (!correctionId) {
+          return jsonResponse({ error: "Missing correctionId" }, { status: 400 });
+        }
+        
+        const result = await deleteCorrectionById(env, correctionId);
+        if (!result.success) {
+          return jsonResponse({ 
+            ok: false, 
+            error: result.error || "Failed to delete correction" 
+          }, { status: 500 });
+        }
+        
+        return jsonResponse({ ok: true, message: "Correction deleted successfully" });
       }
       
       return jsonResponse({ error: "Not found" }, { status: 404 });

@@ -15,6 +15,11 @@ bucket_name = "bt-rag-docs"
 binding = "VECTORIZE_INDEX"
 index_name = "bt-rag-index"
 
+# Human-in-the-Loop Correction Cache
+[[vectorize]]
+binding = "CORRECTION_QA_INDEX"
+index_name = "correction-qa-index"
+
 [assets]
 directory = "./public"
 
@@ -39,10 +44,20 @@ REASONING_EFFORT_SYNTHESIS = "medium"  # For answer synthesis
 REASONING_EFFORT_VALIDATION = "low"    # For simple validations
 REASONING_SUMMARY_LEVEL = "detailed"   # For debugging and transparency
 
+# Correction cache configuration (Human-in-the-Loop)
+CORRECTION_MATCH_THRESHOLD = "0.90"    # Semantic similarity threshold for cache hits
+CORRECTION_CACHE_TTL_DAYS = "365"      # How long corrections stay in cache (1 year)
+
 [[kv_namespaces]]
 binding = "BT_RAG_CHAT_KV"
 id = "abc0e9df684a4bd489d0faab8fcfb56b"
 preview_id = "eccfd83c8a014355a5e49155a600e4dd"
+
+# Human-in-the-Loop Correction Cache KV Store
+[[kv_namespaces]]
+binding = "CORRECTION_QA_KV"
+id = "66cc4d73c2494507af23024a3259f309"
+preview_id = "a0accde62d484d73a19be84bbeb55225"
 
 # Optional Durable Objects (disabled by default). Uncomment to enable and deploy with DO.
 # [durable_objects]

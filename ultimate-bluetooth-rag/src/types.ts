@@ -27,6 +27,14 @@ export interface Env {
   // Chat memory bindings (optional; added by conversational feature)
   BT_RAG_CHAT_KV?: KVNamespace;
   CHAT_SESSIONS?: DurableObjectNamespace;
+
+  // Correction cache bindings (Human-in-the-Loop)
+  CORRECTION_QA_INDEX?: VectorizeIndexBinding;
+  CORRECTION_QA_KV?: KVNamespace;
+  
+  // Correction configuration
+  CORRECTION_MATCH_THRESHOLD?: string;  // Default: "0.90"
+  CORRECTION_CACHE_TTL_DAYS?: string;   // Default: "365"
 }
 
 // Minimal R2 bucket type (available in Workers runtime)
@@ -204,4 +212,82 @@ export interface BluetoothToolResponse {
   ok: boolean;
   message: string;
   data?: unknown;
+}
+
+// ============================================================================
+// Human-in-the-Loop Correction Cache Types
+// ============================================================================
+
+/**
+ * Entry stored in KV for a user correction
+ */
+export interface CorrectionEntry {
+  id: string;                       // hash of original question
+  
+  // Question data
+  originalQuestion: string;         // user's original query
+  questionVariants: string[];       // alternative phrasings
+  normalizedQuestion: string;       // preprocessed version
+  
+  // Answer data
+  wrongAnswer: string;              // what RAG originally returned
+  correctAnswer: string;            // human-provided correction
+  
+  // Context & provenance
+  wrongAnswerSources: string[];     // chunk IDs that led to wrong answer
+  correctAnswerSource?: string;     // reference doc/section for correct answer
+  
+  // Metadata
+  correctedBy: string;              // user ID who corrected
+  correctedAt: string;              // ISO timestamp
+  
+  // Usage tracking
+  timesReused: number;              // how many times this correction was returned
+  lastUsed?: string;                // last time correction was served
+  
+  // Quality control
+  verifiedBy?: string[];            // other users who confirmed this correction
+  flaggedAsOutdated?: boolean;      // mark for review
+  expiresAt?: string;               // optional TTL for time-sensitive corrections
+  
+  // Analytics
+  originalScore: number;            // original RAG confidence
+  tags?: string[];                  // e.g., ["bluetooth", "pairing", "security"]
+}
+
+/**
+ * Request body for submitting a correction
+ */
+export interface CorrectionFeedbackRequest {
+  conversationId: string;
+  messageId?: string;               // which assistant message was wrong
+  originalQuery: string;
+  wrongAnswer: string;
+  correctAnswer: string;            // user-provided correction
+  questionVariants?: string[];      // optional alternative phrasings
+  notes?: string;
+  correctAnswerSource?: string;     // optional doc reference
+  wrongAnswerSources?: string[];    // chunk IDs from original RAG response
+}
+
+/**
+ * Result from checking the correction cache
+ */
+export interface CorrectionCacheHit {
+  found: boolean;
+  confidence: number;               // semantic similarity score (0-1)
+  correction?: CorrectionEntry;
+  matchedVariant?: string;          // which variant matched
+}
+
+/**
+ * Metadata returned with chat responses
+ */
+export interface ChatResponseMetadata {
+  source: "correction_cache" | "rag";
+  verified: boolean;                // true if from correction cache
+  confidence?: number;              // semantic match score if from cache
+  correctionId?: string;            // ID of correction entry if applicable
+  timesReused?: number;             // how many times this correction was used
+  originallyWrong?: string;         // the wrong answer (for transparency)
 }

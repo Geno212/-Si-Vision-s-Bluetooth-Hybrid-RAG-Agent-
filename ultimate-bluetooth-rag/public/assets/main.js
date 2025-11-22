@@ -614,6 +614,9 @@ async function sendChat() {
   const maxIter = Number(getEl('maxIterInput')?.value) || 2;
   const body = { conversationId: conversationId || undefined, messages: [{ role: 'user', content }], stream: true, maxIter };
 
+  // Store the user question for feedback context
+  let responseMetadata = null;
+
   try {
     const res = await fetch(`${getEndpoint()}/chat`, {
       method: 'POST',
@@ -651,6 +654,11 @@ async function sendChat() {
             assistantBubble.innerHTML = ''; // Clear previous content
             renderAssistantAnswer(assistantBubble, finalText);
             console.log('Formatting applied!');
+            
+            // Add feedback buttons for non-verified answers
+            if (responseMetadata && !responseMetadata.verified) {
+              addFeedbackButtons(assistantBubble, { question: content, metadata: responseMetadata });
+            }
           } else {
             console.log('No text to format (empty finalText)');
           }
@@ -684,10 +692,25 @@ async function sendChat() {
       console.log('Processing as non-streaming JSON response');
       const data = await readJsonOrText(res);
       if (!res.ok) throw new Error(data.error || 'Error');
+      
+      // Extract metadata if available
+      responseMetadata = data.metadata || null;
+      
       if (data.answer) {
         console.log('Non-streaming answer received, applying formatting...');
         assistantBubble.innerHTML = ''; // Clear previous content
+        
+        // Add verified badge if it's a correction cache hit
+        if (responseMetadata?.verified) {
+          addVerifiedBadge(assistantBubble, responseMetadata);
+        }
+        
         renderAssistantAnswer(assistantBubble, data.answer);
+        
+        // Add feedback buttons for non-verified answers
+        if (!responseMetadata?.verified) {
+          addFeedbackButtons(assistantBubble, { question: content, metadata: responseMetadata });
+        }
       }
       if (data.citations) renderCitations(data.citations);
       assistantBubble.classList.remove('streaming');
@@ -780,6 +803,79 @@ async function extractTextFromFile(file) {
   throw new Error(`Unsupported file type: .${e}`);
 }
 
+// Configuration for large document handling
+const INGEST_CONFIG = {
+  MAX_CHUNK_SIZE: 300000, // 300KB per chunk (characters)
+  MAX_REQUEST_TIMEOUT: 60000, // 60 seconds
+  RETRY_ATTEMPTS: 3,
+  RETRY_DELAY: 2000 // 2 seconds base delay
+};
+
+// Utility function to chunk large text
+function chunkLargeText(text, maxSize) {
+  if (text.length <= maxSize) {
+    return [text];
+  }
+  
+  const chunks = [];
+  let start = 0;
+  
+  while (start < text.length) {
+    let end = start + maxSize;
+    
+    // If we're not at the end, try to break at a sentence or paragraph
+    if (end < text.length) {
+      // Look for paragraph breaks first
+      const lastParagraph = text.lastIndexOf('\n\n', end);
+      if (lastParagraph > start + maxSize * 0.5) {
+        end = lastParagraph + 2;
+      } else {
+        // Look for sentence endings
+        const lastSentence = Math.max(
+          text.lastIndexOf('. ', end),
+          text.lastIndexOf('.\n', end),
+          text.lastIndexOf('! ', end),
+          text.lastIndexOf('?\n', end)
+        );
+        if (lastSentence > start + maxSize * 0.5) {
+          end = lastSentence + 1;
+        }
+      }
+    }
+    
+    chunks.push(text.slice(start, end).trim());
+    start = end;
+  }
+  
+  return chunks;
+}
+
+// Utility function for HTTP requests with timeout and retry
+async function makeIngestRequest(url, options, retryCount = 0) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), INGEST_CONFIG.MAX_REQUEST_TIMEOUT);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    return response;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    
+    if (retryCount < INGEST_CONFIG.RETRY_ATTEMPTS && error.name !== 'AbortError') {
+      const delay = INGEST_CONFIG.RETRY_DELAY * Math.pow(2, retryCount);
+      console.log(`Request failed, retrying in ${delay/1000}s... (attempt ${retryCount + 1}/${INGEST_CONFIG.RETRY_ATTEMPTS})`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return makeIngestRequest(url, options, retryCount + 1);
+    }
+    
+    throw error;
+  }
+}
+
 async function ingestSelected() {
   const input = document.getElementById('ingestFiles');
   const log = document.getElementById('log');
@@ -788,45 +884,162 @@ async function ingestSelected() {
     log.textContent = 'No files selected.';
     return;
   }
-  log.textContent = `Ingesting ${files.length} files using R2 workflow...\n`;
+  
+  log.textContent = `🚀 Quick Direct Ingestion - Processing ${files.length} file(s)...\n\n`;
 
   for (const f of files) {
+    const startTime = Date.now();
+    
     try {
-      log.textContent += `Step 1/2: Uploading ${f.name} to R2 storage (${f.size} bytes)...\n`;
+      log.textContent += `📄 Processing: ${f.name} (${Math.round(f.size / 1024)} KB)\n`;
       
-      // Step 1: Upload file to R2
-      const uploadFormData = new FormData();
-      uploadFormData.append('file', f);
-      
-      const uploadRes = await fetch(`${getEndpoint()}/upload-r2`, {
-        method: 'POST',
-        body: uploadFormData
+      // Read file content
+      const text = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = reject;
+        reader.readAsText(f);
       });
       
-      const uploadData = await readJsonOrText(uploadRes);
-      if (!uploadRes.ok) throw new Error(uploadData.error || 'Upload failed');
+      log.textContent += `  ✅ Read ${text.length} characters\n`;
       
-      log.textContent += `Upload successful: ${uploadData.filename}\n`;
-      log.textContent += `Step 2/2: Processing ${f.name} from R2 storage...\n`;
+      // Create document ID
+      const timestamp = Date.now();
+      const baseName = f.name.replace(/\.[^/.]+$/, ''); // Remove extension
+      let shortId;
+      if (baseName.length > 30) {
+        // Truncate long names and add hash for uniqueness
+        const hash = btoa(baseName).slice(0, 8);
+        shortId = `${baseName.slice(0, 20)}-${hash}-${timestamp.toString().slice(-6)}`;
+      } else {
+        shortId = `${baseName}-${timestamp.toString().slice(-8)}`;
+      }
       
-      // Step 2: Process file from R2
-      const processRes = await fetch(`${getEndpoint()}/process-r2`, {
-        method: 'POST',
-        headers: JSON_HEADERS,
-        body: JSON.stringify({ filename: uploadData.filename })
-      });
+      const documentTitle = f.name;
+      const documentSource = `Browser Upload: ${f.name}`;
       
-      const processData = await readJsonOrText(processRes);
-      if (!processRes.ok) throw new Error(processData.error || 'Processing failed');
+      log.textContent += `  🆔 Document ID: ${shortId}\n`;
+      log.textContent += `  📏 Size: ${Math.round(text.length / 1024)} KB\n`;
       
-      log.textContent += `SUCCESS: ${f.name} processed!\n`;
-      log.textContent += `Stats: ${processData.stats.success_count}/${processData.stats.total_chunks} chunks successful\n`;
-      log.textContent += `File size: ${(processData.stats.file_size / 1024 / 1024).toFixed(2)} MB\n`;
+      // Check if document needs chunking
+      const needsChunking = text.length > INGEST_CONFIG.MAX_CHUNK_SIZE;
+      
+      if (needsChunking) {
+        log.textContent += `  ⚡ Large document detected! Breaking into chunks (max ${Math.round(INGEST_CONFIG.MAX_CHUNK_SIZE/1000)}KB each)...\n`;
+        const chunks = chunkLargeText(text, INGEST_CONFIG.MAX_CHUNK_SIZE);
+        log.textContent += `  📦 Created ${chunks.length} chunks\n`;
+        
+        let totalChunksCreated = 0;
+        let totalVectorsStored = 0;
+        
+        // Process chunks sequentially
+        for (let i = 0; i < chunks.length; i++) {
+          const chunkId = `${shortId}-chunk-${i + 1}`;
+          const chunkTitle = `${documentTitle} (Part ${i + 1}/${chunks.length})`;
+          
+          log.textContent += `  ⏳ Sending chunk ${i + 1}/${chunks.length} (${Math.round(chunks[i].length/1024)} KB)...\n`;
+          
+          const payload = {
+            id: chunkId,
+            text: chunks[i],
+            title: chunkTitle,
+            source: `${documentSource} - Part ${i + 1}/${chunks.length}`
+          };
+          
+          try {
+            const response = await makeIngestRequest(`${getEndpoint()}/ingest-public`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+              const errorText = await response.text();
+              log.textContent += `  ❌ HTTP Error for chunk ${i + 1}: ${response.status} ${response.statusText}\n`;
+              log.textContent += `     ${errorText}\n`;
+              continue;
+            }
+
+            const result = await response.json();
+            log.textContent += `  ✅ Chunk ${i + 1}/${chunks.length} processed successfully\n`;
+            
+            if (result.chunks !== undefined) totalChunksCreated += result.chunks;
+            if (result.upserted !== undefined) totalVectorsStored += result.upserted;
+            
+            // Small delay between chunks
+            if (i < chunks.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+            
+          } catch (error) {
+            log.textContent += `  ❌ Network error for chunk ${i + 1}: ${error.message}\n`;
+            log.textContent += `     Continuing with remaining chunks...\n`;
+          }
+        }
+        
+        const duration = Math.round((Date.now() - startTime) / 1000);
+        log.textContent += `\n🎉 SUCCESS! ${f.name} ingested in ${duration}s\n`;
+        log.textContent += `📊 Processing results:\n`;
+        log.textContent += `  📦 Document chunks: ${chunks.length}\n`;
+        log.textContent += `  📄 Total chunks created: ${totalChunksCreated}\n`;
+        log.textContent += `  💾 Total vectors stored: ${totalVectorsStored}\n\n`;
+        
+      } else {
+        // Single document processing
+        const payload = {
+          id: shortId,
+          text: text,
+          title: documentTitle,
+          source: documentSource
+        };
+        
+        log.textContent += `  ⏳ Sending to ingestion endpoint...\n`;
+        
+        try {
+          const response = await makeIngestRequest(`${getEndpoint()}/ingest-public`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          const duration = Math.round((Date.now() - startTime) / 1000);
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            log.textContent += `  ❌ HTTP Error: ${response.status} ${response.statusText}\n`;
+            log.textContent += `     ${errorText}\n\n`;
+            continue;
+          }
+
+          const result = await response.json();
+          
+          log.textContent += `\n🎉 SUCCESS! ${f.name} ingested in ${duration}s\n`;
+          log.textContent += `📊 Processing results:\n`;
+          
+          if (result.chunks !== undefined) {
+            log.textContent += `  📄 Chunks created: ${result.chunks}\n`;
+          }
+          if (result.upserted !== undefined) {
+            log.textContent += `  💾 Vectors stored: ${result.upserted}\n`;
+          }
+          log.textContent += '\n';
+          
+        } catch (error) {
+          log.textContent += `  ❌ Network error: ${error.message}\n`;
+          log.textContent += `     Make sure your internet connection is working\n\n`;
+          continue;
+        }
+      }
       
     } catch (err) {
-      log.textContent += `FAIL: ${f.name} → ${String(err.message || err)}\n`;
+      log.textContent += `❌ FAIL: ${f.name} → ${String(err.message || err)}\n\n`;
     }
   }
+  
+  log.textContent += `✨ All files processed! Documents are now searchable in the RAG system.\n`;
+  
+  // Clear file input
+  input.value = '';
 }
 
 // Sidebar toggle functionality
@@ -1032,6 +1245,210 @@ async function cleanupAllDocuments() {
   }
 }
 
+// ============================================================================
+// Human-in-the-Loop Feedback Functions
+// ============================================================================
+
+let currentFeedbackContext = null;
+
+function addFeedbackButtons(bubble, messageData) {
+  // Don't add feedback buttons if already present or if it's a verified answer
+  if (bubble.querySelector('.feedback-buttons') || messageData?.metadata?.verified) {
+    return;
+  }
+  
+  const feedbackDiv = document.createElement('div');
+  feedbackDiv.className = 'feedback-buttons';
+  
+  const approveBtn = document.createElement('button');
+  approveBtn.className = 'feedback-btn approve';
+  approveBtn.innerHTML = '✅ This is correct';
+  approveBtn.addEventListener('click', () => handleApprove(bubble, messageData));
+  
+  const correctBtn = document.createElement('button');
+  correctBtn.className = 'feedback-btn correct';
+  correctBtn.innerHTML = '❌ Incorrect - Let me fix it';
+  correctBtn.addEventListener('click', () => handleCorrect(bubble, messageData));
+  
+  feedbackDiv.appendChild(approveBtn);
+  feedbackDiv.appendChild(correctBtn);
+  
+  bubble.appendChild(feedbackDiv);
+}
+
+function handleApprove(bubble, messageData) {
+  // Just remove feedback buttons - we only store corrections, not approvals
+  const feedbackButtons = bubble.querySelector('.feedback-buttons');
+  if (feedbackButtons) {
+    feedbackButtons.remove();
+  }
+  
+  // Optionally show a brief confirmation
+  const confirmation = document.createElement('div');
+  confirmation.style.cssText = 'margin-top: 8px; font-size: 12px; color: #10b981;';
+  confirmation.textContent = '✓ Thank you for your feedback!';
+  bubble.appendChild(confirmation);
+  
+  setTimeout(() => confirmation.remove(), 3000);
+}
+
+function handleCorrect(bubble, messageData) {
+  // Store context for the correction modal
+  currentFeedbackContext = {
+    bubble: bubble,
+    messageData: messageData,
+    question: messageData?.question || 'Question not available',
+    wrongAnswer: bubble.textContent.replace(/✅ This is correct❌ Incorrect - Let me fix it/g, '').trim(),
+  };
+  
+  // Populate modal fields
+  document.getElementById('correction-question').textContent = currentFeedbackContext.question;
+  document.getElementById('correction-wrong-answer').textContent = currentFeedbackContext.wrongAnswer;
+  document.getElementById('correction-correct-answer').value = '';
+  
+  // Clear variant inputs except first one
+  const variantInputs = document.getElementById('variant-inputs');
+  variantInputs.innerHTML = '<input type="text" class="variant-input" placeholder="E.g., \'How does BLE work?\'" />';
+  
+  // Show modal
+  showCorrectionModal();
+}
+
+function showCorrectionModal() {
+  const modal = document.getElementById('correction-modal');
+  modal.style.display = 'flex';
+  
+  // Close button handler
+  const closeBtn = modal.querySelector('.modal-close');
+  closeBtn.onclick = () => {
+    modal.style.display = 'none';
+    currentFeedbackContext = null;
+  };
+  
+  // Click outside to close
+  modal.onclick = (e) => {
+    if (e.target === modal) {
+      modal.style.display = 'none';
+      currentFeedbackContext = null;
+    }
+  };
+}
+
+function addVerifiedBadge(bubble, metadata) {
+  if (!metadata?.verified) return;
+  
+  const badge = document.createElement('div');
+  badge.className = 'verified-badge';
+  
+  const confidenceText = metadata.confidence 
+    ? ` <span class="verified-confidence">(${(metadata.confidence * 100).toFixed(0)}% match)</span>`
+    : '';
+  
+  badge.innerHTML = `
+    <span class="verified-badge-icon">✓</span>
+    <span>Verified Answer</span>
+    ${confidenceText}
+  `;
+  
+  // Insert at the beginning of the bubble
+  bubble.insertBefore(badge, bubble.firstChild);
+}
+
+async function submitCorrection() {
+  if (!currentFeedbackContext) {
+    console.error('No feedback context available');
+    return;
+  }
+  
+  const correctAnswer = document.getElementById('correction-correct-answer').value.trim();
+  
+  if (!correctAnswer) {
+    alert('Please provide the correct answer');
+    return;
+  }
+  
+  // Collect question variants
+  const variantInputs = document.querySelectorAll('.variant-input');
+  const questionVariants = Array.from(variantInputs)
+    .map(input => input.value.trim())
+    .filter(v => v.length > 0);
+  
+  const payload = {
+    conversationId: getCurrentConversationId(),
+    originalQuery: currentFeedbackContext.question,
+    wrongAnswer: currentFeedbackContext.wrongAnswer,
+    correctAnswer: correctAnswer,
+    questionVariants: questionVariants.length > 0 ? questionVariants : undefined,
+  };
+  
+  const submitBtn = document.getElementById('submit-correction-btn');
+  const originalText = submitBtn.textContent;
+  submitBtn.textContent = '💾 Saving...';
+  submitBtn.disabled = true;
+  
+  try {
+    const res = await fetch(`${getEndpoint()}/api/feedback/correct`, {
+      method: 'POST',
+      headers: { ...getAuthHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    
+    const result = await readJsonOrText(res);
+    
+    if (!res.ok) {
+      throw new Error(result.error || 'Failed to submit correction');
+    }
+    
+    // Success! Hide modal and show confirmation
+    document.getElementById('correction-modal').style.display = 'none';
+    
+    // Remove feedback buttons and show success message
+    const feedbackButtons = currentFeedbackContext.bubble.querySelector('.feedback-buttons');
+    if (feedbackButtons) {
+      feedbackButtons.remove();
+    }
+    
+    const confirmation = document.createElement('div');
+    confirmation.style.cssText = 'margin-top: 8px; padding: 8px; background: #10b98111; border: 1px solid #10b98133; border-radius: 6px; font-size: 13px; color: #10b981;';
+    confirmation.textContent = '✓ Correction saved! This answer will be used for similar questions in the future.';
+    currentFeedbackContext.bubble.appendChild(confirmation);
+    
+    currentFeedbackContext = null;
+    
+    // Auto-remove confirmation after 5 seconds
+    setTimeout(() => confirmation.remove(), 5000);
+    
+  } catch (error) {
+    console.error('Failed to submit correction:', error);
+    alert(`Failed to submit correction: ${error.message}`);
+  } finally {
+    submitBtn.textContent = originalText;
+    submitBtn.disabled = false;
+  }
+}
+
+// Initialize correction modal controls
+function initCorrectionModal() {
+  // Add variant button
+  document.getElementById('add-variant-btn').addEventListener('click', () => {
+    const variantInputs = document.getElementById('variant-inputs');
+    const newInput = document.createElement('input');
+    newInput.type = 'text';
+    newInput.className = 'variant-input';
+    newInput.placeholder = 'Alternative phrasing...';
+    variantInputs.appendChild(newInput);
+  });
+  
+  // Submit button
+  document.getElementById('submit-correction-btn').addEventListener('click', submitCorrection);
+  
+  // Cancel button
+  document.getElementById('cancel-correction-btn').addEventListener('click', () => {
+    document.getElementById('correction-modal').style.display = 'none';
+    currentFeedbackContext = null;
+  });
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   console.log('JavaScript loaded and DOM ready!');
   
@@ -1040,6 +1457,9 @@ window.addEventListener('DOMContentLoaded', () => {
   
   // Initialize sidebar
   initSidebar();
+  
+  // Initialize correction modal
+  initCorrectionModal();
   
   // Initialize existing functionality
   renderConversationSelect();
